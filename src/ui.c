@@ -7,6 +7,42 @@
 #include <stdio.h>
 #include <string.h>
 
+static int imax(int a, int b)
+{
+    return a > b ? a : b;
+}
+
+static int imin(int a, int b)
+{
+    return a < b ? a : b;
+}
+
+static int ui_gap(int logical_px)
+{
+    return imax(1, ap_scale(logical_px));
+}
+
+static int ui_header_margin(void)
+{
+    return imax(ap_scale(48), 30);
+}
+
+static SDL_Rect ui_content_rect(bool has_footer)
+{
+    SDL_Rect rect = ap_get_content_rect(true, has_footer, false);
+    int margin = ui_header_margin();
+    rect.x += margin;
+    rect.w -= margin * 2;
+    if (rect.w < 1)
+        rect.w = 1;
+    return rect;
+}
+
+static int font_line_h(TTF_Font *font)
+{
+    return font ? TTF_FontLineSkip(font) : ui_gap(20);
+}
+
 typedef enum {
     UI_ACTION_TEST = 0,
     UI_ACTION_CAL_LEFT,
@@ -54,20 +90,19 @@ static ui_action show_main_menu(void)
         AP_LIST_ITEM("Calibrate Right", NULL),
         AP_LIST_ITEM("View Values", NULL),
         AP_LIST_ITEM("Restore Backup", NULL),
-        AP_LIST_ITEM("Quit", NULL),
     };
     ap_footer_item footer[] = {
         { .button = AP_BTN_B, .label = "Quit" },
         { .button = AP_BTN_A, .label = "Select", .is_confirm = true },
     };
-    ap_list_opts opts = ap_list_default_opts("Joe's Calibrage", items, 6);
+    ap_list_opts opts = ap_list_default_opts("Joe's Calibrage", items, 5);
     opts.footer = footer;
     opts.footer_count = 2;
 
     ap_list_result result = {0};
     if (ap_list(&opts, &result) != AP_OK)
         return UI_ACTION_QUIT;
-    if (result.selected_index < 0 || result.selected_index > 5)
+    if (result.selected_index < 0 || result.selected_index > 4)
         return UI_ACTION_QUIT;
     return (ui_action)result.selected_index;
 }
@@ -114,7 +149,8 @@ static void draw_line(int x1, int y1, int x2, int y2, ap_color c)
 }
 
 static void draw_stick_widget(int cx, int cy, int radius, float x, float y,
-                              const char *label, const char *detail)
+                              const char *label, const char *detail,
+                              int text_x, int text_w)
 {
     ap_theme *t = ap_get_theme();
     ap_color ring = t->hint;
@@ -126,12 +162,17 @@ static void draw_stick_widget(int cx, int cy, int radius, float x, float y,
     int dx = (int)(x * (float)(radius - ap_scale(8)));
     int dy = (int)(y * (float)(radius - ap_scale(8)));
     ap_draw_circle(cx + dx, cy + dy, ap_scale(7), dot);
-    ap_draw_text(ap_get_font(AP_FONT_SMALL), label,
-                 cx - ap_measure_text(ap_get_font(AP_FONT_SMALL), label) / 2,
-                 cy + radius + ap_scale(12), t->text);
-    ap_draw_text(ap_get_font(AP_FONT_TINY), detail,
-                 cx - ap_measure_text(ap_get_font(AP_FONT_TINY), detail) / 2,
-                 cy + radius + ap_scale(32), t->hint);
+
+    TTF_Font *label_font = ap_get_font(AP_FONT_TINY);
+    TTF_Font *detail_font = ap_get_font(AP_FONT_MICRO);
+    int label_y = cy + radius + ui_gap(6);
+    int detail_y = label_y + font_line_h(label_font);
+    int label_w = ap_measure_text_ellipsized(label_font, label, text_w);
+    int detail_w = ap_measure_text_ellipsized(detail_font, detail, text_w);
+    ap_draw_text_ellipsized(label_font, label, text_x + (text_w - label_w) / 2,
+                            label_y, t->text, text_w);
+    ap_draw_text_ellipsized(detail_font, detail, text_x + (text_w - detail_w) / 2,
+                            detail_y, t->hint, text_w);
 }
 
 static void show_test_screen(void)
@@ -152,21 +193,32 @@ static void show_test_screen(void)
         ap_clear_screen();
         ap_draw_screen_title("Test Sticks", NULL);
 
-        SDL_Rect content = ap_get_content_rect(true, true, false);
-        int radius = content.w < content.h ? content.w / 7 : content.h / 4;
-        if (radius < ap_scale(48))
-            radius = ap_scale(48);
-        int left_cx = content.x + content.w / 4;
-        int right_cx = content.x + (content.w * 3) / 4;
-        int cy = content.y + content.h / 2 - ap_scale(20);
+        SDL_Rect content = ui_content_rect(true);
+        TTF_Font *status_font = ap_get_font(AP_FONT_TINY);
+        TTF_Font *label_font = ap_get_font(AP_FONT_TINY);
+        TTF_Font *detail_font = ap_get_font(AP_FONT_MICRO);
+        int footer_top = ap_get_screen_height() - ap_get_footer_height();
+        int status_y = content.y + ui_gap(4);
+        int widget_top = status_y + font_line_h(status_font) + ui_gap(18);
+        int label_h = font_line_h(label_font) + font_line_h(detail_font);
+        int widget_gap = ui_gap(20);
+        int col_gap = ui_gap(20);
+        int col_w = (content.w - col_gap) / 2;
+        int max_radius_w = imax(1, (col_w - ui_gap(8)) / 2);
+        int max_radius_h = imax(1, (footer_top - widget_top - label_h - widget_gap) / 2);
+        int radius = imin(max_radius_w, max_radius_h);
+        radius = imax(radius, ui_gap(44));
+        radius = imin(radius, max_radius_h);
+        int left_x = content.x;
+        int right_x = content.x + col_w + col_gap;
+        int left_cx = left_x + col_w / 2;
+        int right_cx = right_x + col_w / 2;
+        int cy = widget_top + radius;
 
         char left_detail[80];
         char right_detail[80];
         snprintf(left_detail, sizeof(left_detail), have_axes ? "SDL axis" : "No input");
         snprintf(right_detail, sizeof(right_detail), have_axes ? "SDL axis" : "No input");
-
-        draw_stick_widget(left_cx, cy, radius, axes[0], axes[1], "Left", left_detail);
-        draw_stick_widget(right_cx, cy, radius, axes[2], axes[3], "Right", right_detail);
 
         char joy_type[32] = "unknown";
         if (jc_read_joy_type(joy_type, sizeof(joy_type)) != 0)
@@ -174,8 +226,13 @@ static void show_test_screen(void)
         char status[128];
         snprintf(status, sizeof(status), "SDL axes: %s   joy_type: %s",
                  have_axes ? "live" : "unavailable", joy_type);
-        ap_draw_text(ap_get_font(AP_FONT_TINY), status, content.x,
-                     content.y + ap_scale(8), ap_get_theme()->hint);
+        ap_draw_text_ellipsized(status_font, status, content.x, status_y,
+                                ap_get_theme()->hint, content.w);
+
+        draw_stick_widget(left_cx, cy, radius, axes[0], axes[1], "Left", left_detail,
+                          left_x, col_w);
+        draw_stick_widget(right_cx, cy, radius, axes[2], axes[3], "Right", right_detail,
+                          right_x, col_w);
 
         ap_footer_item footer[] = {
             { .button = AP_BTN_B, .label = "Back" },
@@ -189,16 +246,26 @@ static void show_test_screen(void)
         SDL_JoystickClose(joy);
 }
 
-static void format_config_line(char *buf, size_t size, const char *name,
-                               const jc_config *cfg, bool loaded)
+static void draw_config_block(const char *name, const jc_config *cfg, bool loaded,
+                              int x, int y, int w)
 {
-    snprintf(buf, size,
-             "%s (%s)\n"
-             "x_min=%d  x_zero=%d  x_max=%d\n"
-             "y_min=%d  y_zero=%d  y_max=%d",
-             name, loaded ? "saved" : "default",
-             cfg->x_min, cfg->x_zero, cfg->x_max,
+    ap_theme *t = ap_get_theme();
+    TTF_Font *section_font = ap_get_font(AP_FONT_SMALL);
+    TTF_Font *body_font = ap_get_font(AP_FONT_TINY);
+    char line[96];
+
+    snprintf(line, sizeof(line), "%s (%s)", name, loaded ? "saved" : "default");
+    ap_draw_text_ellipsized(section_font, line, x, y, t->text, w);
+    y += font_line_h(section_font);
+
+    snprintf(line, sizeof(line), "X: min=%d  zero=%d  max=%d",
+             cfg->x_min, cfg->x_zero, cfg->x_max);
+    ap_draw_text_ellipsized(body_font, line, x, y, t->hint, w);
+    y += font_line_h(body_font);
+
+    snprintf(line, sizeof(line), "Y: min=%d  zero=%d  max=%d",
              cfg->y_min, cfg->y_zero, cfg->y_max);
+    ap_draw_text_ellipsized(body_font, line, x, y, t->hint, w);
 }
 
 static void show_values_screen(void)
@@ -206,16 +273,45 @@ static void show_values_screen(void)
     jc_config_pair cfg;
     char err[160] = {0};
     (void)jc_config_load_pair(&cfg, err, sizeof(err));
-    char left[180];
-    char right[180];
-    format_config_line(left, sizeof(left), "Left", &cfg.left, cfg.have_left);
-    format_config_line(right, sizeof(right), "Right", &cfg.right, cfg.have_right);
-    char joy_type[32] = "n/a";
-    (void)jc_read_joy_type(joy_type, sizeof(joy_type));
-    char msg[520];
-    snprintf(msg, sizeof(msg), "%s\n\n%s\n\nSD root:\n%s\n\njoy_type: %s",
-             left, right, jc_config_sd_userdata_root(), joy_type);
-    show_message(msg, false);
+
+    bool done = false;
+    while (!done) {
+        ap_input_event ev;
+        while (ap_poll_input(&ev)) {
+            if (ev.pressed && (ev.button == AP_BTN_A || ev.button == AP_BTN_B))
+                done = true;
+        }
+
+        ap_clear_screen();
+        ap_draw_screen_title("Values", NULL);
+        SDL_Rect content = ui_content_rect(true);
+        ap_theme *t = ap_get_theme();
+        TTF_Font *body_font = ap_get_font(AP_FONT_TINY);
+        TTF_Font *section_font = ap_get_font(AP_FONT_SMALL);
+        int y = content.y + ui_gap(4);
+        int block_h = font_line_h(section_font) + font_line_h(body_font) * 2;
+
+        draw_config_block("Left", &cfg.left, cfg.have_left, content.x, y, content.w);
+        y += block_h + ui_gap(12);
+        draw_config_block("Right", &cfg.right, cfg.have_right, content.x, y, content.w);
+        y += block_h + ui_gap(14);
+
+        char joy_type[32] = "n/a";
+        (void)jc_read_joy_type(joy_type, sizeof(joy_type));
+        char line[JC_PATH_MAX + 32];
+        snprintf(line, sizeof(line), "SD: %s", jc_config_sd_userdata_root());
+        ap_draw_text_ellipsized(body_font, line, content.x, y, t->hint, content.w);
+        y += font_line_h(body_font);
+        snprintf(line, sizeof(line), "joy_type: %s", joy_type);
+        ap_draw_text_ellipsized(body_font, line, content.x, y, t->hint, content.w);
+
+        ap_footer_item footer[] = {
+            { .button = AP_BTN_A, .label = "OK", .is_confirm = true },
+        };
+        ap_draw_footer(footer, 1);
+        ap_request_frame();
+        ap_present();
+    }
 }
 
 static bool range_ready(const jc_calibration_capture *cap)
@@ -231,15 +327,20 @@ static void draw_calibration_screen(jc_stick stick, int step,
 {
     ap_clear_screen();
     ap_draw_screen_title(stick == JC_STICK_LEFT ? "Calibrate Left" : "Calibrate Right", NULL);
-    SDL_Rect content = ap_get_content_rect(true, true, false);
+    SDL_Rect content = ui_content_rect(true);
     ap_theme *t = ap_get_theme();
 
     const char *instruction = step == 0
         ? "Rotate fully around the edge, then press A."
         : "Release the stick and keep it centered, then press Y.";
-    ap_draw_text_wrapped(ap_get_font(AP_FONT_SMALL), instruction,
-                         content.x, content.y + ap_scale(8), content.w,
-                         t->text, AP_ALIGN_CENTER);
+    TTF_Font *instruction_font = ap_get_font(AP_FONT_TINY);
+    TTF_Font *label_font = ap_get_font(AP_FONT_TINY);
+    TTF_Font *detail_font = ap_get_font(AP_FONT_MICRO);
+    TTF_Font *stats_font = ap_get_font(AP_FONT_MICRO);
+    int instruction_y = content.y + ui_gap(4);
+    int instruction_h = ap_draw_text_wrapped(instruction_font, instruction,
+                                             content.x, instruction_y, content.w,
+                                             t->text, AP_ALIGN_LEFT);
 
     int x = stick == JC_STICK_LEFT ? raw->left_x : raw->right_x;
     int y = stick == JC_STICK_LEFT ? raw->left_y : raw->right_y;
@@ -252,23 +353,32 @@ static void draw_calibration_screen(jc_stick stick, int step,
         ny = jc_config_normalize_axis(y, cap->y_min, cy, cap->y_max);
     }
 
-    int radius = content.h / 4;
-    if (radius < ap_scale(54))
-        radius = ap_scale(54);
+    int footer_top = ap_get_screen_height() - ap_get_footer_height();
+    int stats_h = font_line_h(stats_font) * 2;
+    int label_h = font_line_h(label_font) + font_line_h(detail_font);
+    int widget_top = instruction_y + instruction_h + ui_gap(14);
+    int widget_bottom = footer_top - stats_h - ui_gap(16);
+    int max_radius_h = imax(1, (widget_bottom - widget_top - label_h) / 2);
+    int radius = imin(content.w / 5, max_radius_h);
+    radius = imax(radius, ui_gap(38));
+    radius = imin(radius, max_radius_h);
     int cx = content.x + content.w / 2;
-    int circle_y = content.y + content.h / 2 - ap_scale(10);
+    int circle_y = widget_top + radius;
     char detail[96];
     snprintf(detail, sizeof(detail), "raw %d,%d", x, y);
     draw_stick_widget(cx, circle_y, radius, nx, ny,
-                      stick == JC_STICK_LEFT ? "Left" : "Right", detail);
+                      stick == JC_STICK_LEFT ? "Left" : "Right", detail,
+                      content.x, content.w);
 
-    char stats[160];
-    snprintf(stats, sizeof(stats),
-             "range x:%d-%d y:%d-%d   samples:%d   center:%d",
-             cap->x_min, cap->x_max, cap->y_min, cap->y_max,
+    int stats_y = footer_top - stats_h - ui_gap(8);
+    char stats[96];
+    snprintf(stats, sizeof(stats), "range x:%d-%d y:%d-%d",
+             cap->x_min, cap->x_max, cap->y_min, cap->y_max);
+    ap_draw_text_ellipsized(stats_font, stats, content.x, stats_y, t->hint, content.w);
+    snprintf(stats, sizeof(stats), "samples:%d  center:%d",
              cap->range_count, cap->zero_count);
-    ap_draw_text(ap_get_font(AP_FONT_TINY), stats, content.x,
-                 content.y + content.h - ap_scale(34), t->hint);
+    ap_draw_text_ellipsized(stats_font, stats, content.x,
+                            stats_y + font_line_h(stats_font), t->hint, content.w);
 }
 
 static void calibrate_stick(jc_stick stick)
