@@ -31,8 +31,16 @@ echo "args: $*"
 "./$APP_BIN" "$@"
 STATUS=$?
 
-if [ "${PLATFORM:-}" = "tg5040" ]; then
+case "${PLATFORM:-}" in
+tg5040|tg5050)
     rm -f /tmp/trimui_inputd/grab
+    for pid in $(pidof trimui_inputd 2>/dev/null || true); do
+        kill -CONT "$pid" 2>/dev/null || true
+    done
+    ;;
+esac
+
+if [ "${PLATFORM:-}" = "tg5040" ]; then
     if [ -f /tmp/trimui_inputd_restart ]; then
         echo "Restarting trimui_inputd for updated calibration."
         killall -9 trimui_inputd >/dev/null 2>&1 || true

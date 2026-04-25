@@ -15,19 +15,20 @@ SRC_FILES := $(shell find src -name '*.c' -print | sort)
 TEST_SRC_FILES := tests/calibrage_tests.c src/calibration.c src/config.c src/platform.c src/raw_input.c
 MY355_TOOLCHAIN := ghcr.io/loveretro/my355-toolchain:latest
 TG5040_TOOLCHAIN := ghcr.io/loveretro/tg5040-toolchain:latest
+TG5050_TOOLCHAIN := ghcr.io/loveretro/tg5050-toolchain:latest
 ADB ?= adb
 
 COMMON_INCLUDES := -I$(APOSTROPHE_DIR)/include -Isrc
 APOSTROPHE_PATCHES := $(wildcard $(PATCH_DIR)/*.patch)
 APOSTROPHE_PATCH_STAMP := $(BUILD_DIR)/apostrophe-patches.stamp
 
-.PHONY: all native mac run-mac run-native test-native my355 tg5040 \
-	package-my355 package-tg5040 package do-package deploy deploy-platform \
+.PHONY: all native mac run-mac run-native test-native my355 tg5040 tg5050 \
+	package-my355 package-tg5040 package-tg5050 package do-package deploy deploy-platform \
 	clean help update-apostrophe setup-nextui-preview-cache clean-nextui-preview-cache
 
 native: mac
 run-native: run-mac
-all: my355 tg5040
+all: my355 tg5040 tg5050
 
 $(APOSTROPHE_DIR)/include/apostrophe.h:
 	git submodule update --init
@@ -107,11 +108,21 @@ tg5040: $(APOSTROPHE_PATCH_STAMP)
 		$(TG5040_TOOLCHAIN) \
 		make -C /workspace -f ports/tg5040/Makefile BUILD_DIR=/workspace/$(BUILD_DIR)/tg5040
 
+tg5050: $(APOSTROPHE_PATCH_STAMP)
+	@mkdir -p $(BUILD_DIR)/tg5050
+	docker run --rm \
+		-v "$(CURDIR)":/workspace \
+		$(TG5050_TOOLCHAIN) \
+		make -C /workspace -f ports/tg5050/Makefile BUILD_DIR=/workspace/$(BUILD_DIR)/tg5050
+
 package-my355: my355
 	@$(MAKE) do-package PLATFORM=my355
 
 package-tg5040: tg5040
 	@$(MAKE) do-package PLATFORM=tg5040
+
+package-tg5050: tg5050
+	@$(MAKE) do-package PLATFORM=tg5050
 
 do-package:
 	@rm -rf "$(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak"
@@ -123,11 +134,12 @@ do-package:
 	@rm -f "$(DIST_DIR)/$(PLATFORM)/$(PAK_NAME).pak.zip"
 	@cd "$(BUILD_DIR)/$(PLATFORM)" && zip -r "$(CURDIR)/$(DIST_DIR)/$(PLATFORM)/$(PAK_NAME).pak.zip" "$(PAK_NAME).pak" -x '.*'
 
-package: package-my355 package-tg5040
+package: package-my355 package-tg5040 package-tg5050
 	@rm -rf "$(STAGING_DIR)"
-	@mkdir -p "$(STAGING_DIR)/Tools/my355" "$(STAGING_DIR)/Tools/tg5040"
+	@mkdir -p "$(STAGING_DIR)/Tools/my355" "$(STAGING_DIR)/Tools/tg5040" "$(STAGING_DIR)/Tools/tg5050"
 	@cp -a "$(BUILD_DIR)/my355/$(PAK_NAME).pak" "$(STAGING_DIR)/Tools/my355/"
 	@cp -a "$(BUILD_DIR)/tg5040/$(PAK_NAME).pak" "$(STAGING_DIR)/Tools/tg5040/"
+	@cp -a "$(BUILD_DIR)/tg5050/$(PAK_NAME).pak" "$(STAGING_DIR)/Tools/tg5050/"
 	@mkdir -p "$(DIST_DIR)/all"
 	@rm -f "$(DIST_DIR)/all/$(PAK_NAME).pakz"
 	@cd "$(STAGING_DIR)" && zip -9 -r "$(CURDIR)/$(DIST_DIR)/all/$(PAK_NAME).pakz" . -x '.*'
@@ -151,6 +163,7 @@ deploy:
 		uname -a 2>/dev/null' 2>/dev/null | tr '\000' '\n' | tr -d '\r'); \
 	case "$$FINGERPRINT" in \
 		*rk3566*|*miyoo-355*) PLATFORM=my355 ;; \
+		*allwinner,a523*|*sun55iw3*) PLATFORM=tg5050 ;; \
 		*allwinner,a133*|*sun50iw*) PLATFORM=tg5040 ;; \
 		*) \
 			echo "Error: Could not detect a supported platform from adb fingerprint."; \
@@ -186,7 +199,9 @@ help:
 	@echo "  make run-mac       Build and run the mac binary"
 	@echo "  make my355         Cross-build the my355 binary"
 	@echo "  make tg5040        Cross-build the tg5040 binary"
+	@echo "  make tg5050        Cross-build the tg5050 binary"
 	@echo "  make package-my355 Build a my355 .pak.zip"
 	@echo "  make package-tg5040 Build a tg5040 .pak.zip"
+	@echo "  make package-tg5050 Build a tg5050 .pak.zip"
 	@echo "  make package       Build the multi-platform .pakz"
 	@echo "  make deploy        Detect adb platform, build, and deploy to Tools"

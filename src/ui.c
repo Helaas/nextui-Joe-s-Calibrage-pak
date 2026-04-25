@@ -4,8 +4,10 @@
 #include "calibrage.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 static int imax(int a, int b)
 {
@@ -50,6 +52,12 @@ static int apply_runtime_reload(char *err, size_t err_size)
     if (jc_platform_current()->id == JC_PLATFORM_TG5040)
         ap_refresh_input();
     return 0;
+}
+
+static bool platform_uses_split_raw(void)
+{
+    jc_raw_format format = jc_platform_current()->raw_format;
+    return format == JC_RAW_FORMAT_TG5040 || format == JC_RAW_FORMAT_TG5050;
 }
 
 typedef enum {
@@ -322,7 +330,7 @@ static void show_values_screen(void)
         snprintf(line, sizeof(line), "SD mirror: %s", jc_config_sd_userdata_root());
         ap_draw_text_ellipsized(diag_font, line, content.x, y, t->hint, content.w);
         y += font_line_h(diag_font);
-        if (jc_platform_current()->raw_format == JC_RAW_FORMAT_TG5040) {
+        if (platform_uses_split_raw()) {
             snprintf(line, sizeof(line), "Raw: L %s  R %s",
                      jc_raw_left_device_path(), jc_raw_right_device_path());
         } else {
@@ -345,6 +353,13 @@ static bool range_ready(const jc_calibration_capture *cap)
     return cap->range_count >= 20 &&
            (cap->x_max - cap->x_min) >= min_range &&
            (cap->y_max - cap->y_min) >= min_range;
+}
+
+static void transform_calibration_display_axes(float *x, float *y)
+{
+    if (jc_platform_current()->raw_format == JC_RAW_FORMAT_TG5050)
+        *y = -*y;
+    (void)x;
 }
 
 static void draw_calibration_screen(jc_stick stick, int step,
@@ -388,6 +403,7 @@ static void draw_calibration_screen(jc_stick stick, int step,
         int ymax = cap->range_count > 0 ? cap->y_max : def.y_max;
         nx = jc_config_normalize_axis(x, xmin, zx, xmax);
         ny = jc_config_normalize_axis(y, ymin, zy, ymax);
+        transform_calibration_display_axes(&nx, &ny);
     }
 
     int footer_top = ap_get_screen_height() - ap_get_footer_height();
@@ -421,6 +437,56 @@ static void draw_calibration_screen(jc_stick stick, int step,
                                 stats_y - font_line_h(stats_font) - ui_gap(2),
                                 t->text, content.w);
     }
+}
+
+static unsigned raw_button_state(const jc_raw_sample *sample)
+{
+    if (jc_platform_current()->raw_format == JC_RAW_FORMAT_TG5050)
+        return (unsigned)sample->left_buttons | (unsigned)sample->right_buttons;
+    if (jc_platform_current()->raw_format == JC_RAW_FORMAT_TG5040)
+        return (unsigned)sample->right_buttons;
+    return 0;
+}
+
+static bool tg5050_rotate_270_active(void)
+{
+    const char *path = getenv("CALIBRAGE_TG5050_ROTATE_270_PATH");
+    if (!path || path[0] == '\0')
+        path = "/var/trimui_inputd/rotate_270";
+    return access(path, F_OK) == 0;
+}
+
+static unsigned raw_button_mask(int button)
+{
+    if (jc_platform_current()->raw_format == JC_RAW_FORMAT_TG5050) {
+        if (tg5050_rotate_270_active()) {
+            switch (button) {
+            case AP_BTN_A: return 0x00000001u;
+            case AP_BTN_B: return 0x00000002u;
+            case AP_BTN_X: return 0x00010000u;
+            case AP_BTN_Y: return 0x00020000u;
+            default: return 0;
+            }
+        } else {
+            switch (button) {
+            case AP_BTN_A: return 0x00000100u;
+            case AP_BTN_B: return 0x00000001u;
+            case AP_BTN_X: return 0x00000200u;
+            case AP_BTN_Y: return 0x00000002u;
+            default: return 0;
+            }
+        }
+    }
+    if (jc_platform_current()->raw_format == JC_RAW_FORMAT_TG5040) {
+        switch (button) {
+        case AP_BTN_A: return 0x10u;
+        case AP_BTN_B: return 0x20u;
+        case AP_BTN_X: return 0x04u;
+        case AP_BTN_Y: return 0x08u;
+        default: return 0;
+        }
+    }
+    return 0;
 }
 
 static void handle_calibration_button(int button, int *step,
@@ -480,25 +546,25 @@ static void handle_raw_calibration_buttons(unsigned raw_pressed, int *step,
                                            bool *final_error,
                                            bool *saved)
 {
-    if (raw_pressed & 0x20)
+    if (raw_pressed & raw_button_mask(AP_BTN_B))
         handle_calibration_button(AP_BTN_B, step, cap, stick, done, cancelled,
                                   status_message, status_size,
                                   final_message, final_size, final_error, saved);
     if (*done)
         return;
-    if (raw_pressed & 0x04)
+    if (raw_pressed & raw_button_mask(AP_BTN_X))
         handle_calibration_button(AP_BTN_X, step, cap, stick, done, cancelled,
                                   status_message, status_size,
                                   final_message, final_size, final_error, saved);
     if (*done)
         return;
-    if (raw_pressed & 0x10)
+    if (raw_pressed & raw_button_mask(AP_BTN_A))
         handle_calibration_button(AP_BTN_A, step, cap, stick, done, cancelled,
                                   status_message, status_size,
                                   final_message, final_size, final_error, saved);
     if (*done)
         return;
-    if (raw_pressed & 0x08)
+    if (raw_pressed & raw_button_mask(AP_BTN_Y))
         handle_calibration_button(AP_BTN_Y, step, cap, stick, done, cancelled,
                                   status_message, status_size,
                                   final_message, final_size, final_error, saved);
@@ -549,8 +615,8 @@ static void calibrate_stick(jc_stick stick)
             else
                 jc_capture_add_center(&cap, x, y);
         }
-        if (poll > 0 && jc_platform_current()->raw_format == JC_RAW_FORMAT_TG5040) {
-            unsigned raw_buttons = (unsigned)sample.right_buttons;
+        if (poll > 0 && platform_uses_split_raw()) {
+            unsigned raw_buttons = raw_button_state(&sample);
             unsigned raw_pressed = raw_buttons & ~last_raw_buttons;
             last_raw_buttons = raw_buttons;
             handle_raw_calibration_buttons(raw_pressed, &step, &cap, stick,

@@ -34,6 +34,12 @@ static const char *env_or_default(const char *env_name, const char *fallback)
     return (value && value[0] != '\0') ? value : fallback;
 }
 
+static bool platform_runtime_primary(const jc_platform_info *platform)
+{
+    return platform->id == JC_PLATFORM_TG5040 ||
+           platform->id == JC_PLATFORM_TG5050;
+}
+
 const char *jc_config_sd_userdata_root(void)
 {
     static char dynamic_root[JC_PATH_MAX];
@@ -41,7 +47,7 @@ const char *jc_config_sd_userdata_root(void)
     const char *env = getenv("CALIBRAGE_SD_USERDATA_ROOT");
     if (env && env[0] != '\0')
         return env;
-    if (platform->id == JC_PLATFORM_TG5040) {
+    if (platform_runtime_primary(platform)) {
         const char *userdata = getenv("USERDATA_PATH");
         if (userdata && userdata[0] != '\0') {
             int n = snprintf(dynamic_root, sizeof(dynamic_root),
@@ -395,7 +401,7 @@ int jc_config_load_pair(jc_config_pair *pair, char *err, size_t err_size)
     const jc_platform_info *platform = jc_platform_current();
     const char *first_root = jc_config_sd_userdata_root();
     const char *second_root = jc_config_runtime_userdata_root();
-    if (platform->id == JC_PLATFORM_TG5040) {
+    if (platform_runtime_primary(platform)) {
         first_root = jc_config_runtime_userdata_root();
         second_root = jc_config_sd_userdata_root();
     }
@@ -470,7 +476,7 @@ int jc_config_save_stick(jc_stick stick, const jc_config *cfg, char *err, size_t
     const jc_platform_info *platform = jc_platform_current();
     const char *primary_root = jc_config_sd_userdata_root();
     const char *secondary_root = jc_config_runtime_userdata_root();
-    if (platform->id == JC_PLATFORM_TG5040) {
+    if (platform_runtime_primary(platform)) {
         primary_root = jc_config_runtime_userdata_root();
         secondary_root = jc_config_sd_userdata_root();
     }
@@ -546,7 +552,7 @@ int jc_config_restore_backup(char *err, size_t err_size)
     const jc_platform_info *platform = jc_platform_current();
     const char *first_root = jc_config_sd_userdata_root();
     const char *second_root = jc_config_runtime_userdata_root();
-    if (platform->id == JC_PLATFORM_TG5040) {
+    if (platform_runtime_primary(platform)) {
         first_root = jc_config_runtime_userdata_root();
         second_root = jc_config_sd_userdata_root();
     }

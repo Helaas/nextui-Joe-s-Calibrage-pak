@@ -8,10 +8,7 @@ Supported platforms:
 
 - `my355` / Miyoo Flip.
 - `tg5040` / TrimUI Smart Pro.
-
-Future work:
-
-- `tg5050` / TrimUI Smart Pro S still needs the same stock-binary and live-device investigation before support is added.
+- `tg5050` / TrimUI Smart Pro S.
 
 ## Shared Config Format
 
@@ -126,6 +123,63 @@ Persistence strategy:
 - Mirror successful saves to `/mnt/SDCARD/.userdata/tg5040/joes-calibrage/joypad*.config`.
 - The SD mirror is platform-isolated and is not read by my355.
 - On app exit, `launch.sh` still removes `/tmp/trimui_inputd/grab` and restarts `trimui_inputd` if `/tmp/trimui_inputd_restart` exists. This is a fallback for abnormal exits; normal save/restore applies the restart inside the app.
+
+## tg5050 / TrimUI Smart Pro S
+
+Live findings from the connected NextUI unit:
+
+- Device tree model: `sun55iw3`.
+- SoC family: Allwinner A523.
+- Kernel: Linux 5.15.147 aarch64.
+- SD card path: `/mnt/SDCARD`, a symlink to `/mnt/sdcard/mmcblk1p1`.
+- Internal runtime persistence path: `/mnt/UDISK`.
+- Linux/SDL input device: `TRIMUI Player1` at `/dev/input/event4` and `/dev/input/js0`.
+- Runtime input daemon: `/usr/trimui/bin/trimui_inputd`.
+
+`trimui_inputd` strings/disassembly show these calibration files:
+
+```text
+/mnt/UDISK/joypad.config
+/mnt/UDISK/joypad_right.config
+```
+
+If files are missing, `trimui_inputd` uses these defaults:
+
+```text
+x_min=560
+x_max=3600
+y_min=400
+y_max=3600
+x_zero=2048
+y_zero=2048
+```
+
+Raw stick sources:
+
+- Left stick: `/dev/ttyAS5`.
+- Right stick: `/dev/ttyAS7`.
+- 19200 baud, 8N1.
+- Twenty-byte packet with `0xff` at byte `0` and `0xfe` at byte `18`.
+- Button mask is little-endian u32 in bytes `2..5`.
+- Left X/Y are little-endian u16 at bytes `6` and `8`.
+- Right X/Y are little-endian u16 at bytes `10` and `12`.
+- Raw face-button bits observed from daemon disassembly depend on `/var/trimui_inputd/rotate_270`.
+  A live no-rotate capture on 2026-04-26 mapped `A=0x00000100`, `B=0x00000001`, `X=0x00000200`, `Y=0x00000002`.
+  With rotate flag present, it maps `A=0x00000001`, `B=0x00000002`, `X=0x00010000`, `Y=0x00020000`.
+- Raw Y increases opposite to the app-facing SDL axis, so the calibration preview dot flips Y for display only; saved calibration values stay in the raw daemon coordinate system.
+
+Runtime update contract:
+
+- During raw calibration, create `/tmp/trimui_inputd/grab` and pause `trimui_inputd`; live probing and file descriptors showed the daemon keeps `/dev/ttyAS5` and `/dev/ttyAS7` open.
+- After writing calibration files, touch `/tmp/trimui_inputd/cal_update`.
+- The daemon has a live `cal_update` hook, so tg5050 does not need the tg5040 daemon restart path for normal saves.
+
+Persistence strategy:
+
+- Runtime source of truth is `/mnt/UDISK/joypad*.config`.
+- Mirror successful saves to `/mnt/SDCARD/.userdata/tg5050/joes-calibrage/joypad*.config`.
+- The SD mirror is platform-isolated and is not read by my355 or tg5040.
+- On app exit, `launch.sh` removes `/tmp/trimui_inputd/grab` and resumes `trimui_inputd` if calibration exited abnormally.
 
 ## Write Safety
 

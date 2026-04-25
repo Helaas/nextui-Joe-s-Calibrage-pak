@@ -55,6 +55,32 @@ static const jc_platform_info platform_tg5040 = {
     .raw_format = JC_RAW_FORMAT_TG5040,
 };
 
+static const jc_platform_info platform_tg5050 = {
+    .id = JC_PLATFORM_TG5050,
+    .id_name = "tg5050",
+    .display_name = "TrimUI Smart Pro S",
+    .raw_min = 0,
+    .raw_max = 4095,
+    .min_range = 500,
+    .default_x_min = 560,
+    .default_x_max = 3600,
+    .default_y_min = 400,
+    .default_y_max = 3600,
+    .default_x_zero = 2048,
+    .default_y_zero = 2048,
+    .sd_userdata_root = "/mnt/SDCARD/.userdata/tg5050/joes-calibrage",
+    .runtime_userdata_root = "/mnt/UDISK",
+    .inputd_dir = "/tmp/trimui_inputd",
+    .reload_trigger_path = "/tmp/trimui_inputd/cal_update",
+    .joy_type_path = NULL,
+    .raw_combined_device = NULL,
+    .raw_left_device = "/dev/ttyAS5",
+    .raw_right_device = "/dev/ttyAS7",
+    .calibration_flag_path = "/tmp/trimui_inputd/grab",
+    .raw_baud = 19200,
+    .raw_format = JC_RAW_FORMAT_TG5050,
+};
+
 static int env_is(const char *env, const char *value)
 {
     return env && strcmp(env, value) == 0;
@@ -63,12 +89,16 @@ static int env_is(const char *env, const char *value)
 const jc_platform_info *jc_platform_current(void)
 {
     const char *env = getenv("CALIBRAGE_PLATFORM");
+    if (env_is(env, "tg5050"))
+        return &platform_tg5050;
     if (env_is(env, "tg5040"))
         return &platform_tg5040;
     if (env_is(env, "my355"))
         return &platform_my355;
 
-#if defined(PLATFORM_TG5040)
+#if defined(PLATFORM_TG5050)
+    return &platform_tg5050;
+#elif defined(PLATFORM_TG5040)
     return &platform_tg5040;
 #else
     return &platform_my355;

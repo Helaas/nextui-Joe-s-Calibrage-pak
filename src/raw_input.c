@@ -27,6 +27,18 @@
 static pid_t paused_pids[JC_MAX_PAUSED_PIDS];
 static int paused_pid_count = 0;
 
+static bool platform_uses_split_raw(void)
+{
+    jc_raw_format format = jc_platform_current()->raw_format;
+    return format == JC_RAW_FORMAT_TG5040 || format == JC_RAW_FORMAT_TG5050;
+}
+
+static bool platform_uses_trimui_inputd(void)
+{
+    jc_platform_id id = jc_platform_current()->id;
+    return id == JC_PLATFORM_TG5040 || id == JC_PLATFORM_TG5050;
+}
+
 const char *jc_raw_device_path(void)
 {
     const char *env = getenv("CALIBRAGE_RAW_DEVICE");
@@ -145,8 +157,7 @@ int jc_raw_reader_open(jc_raw_reader *reader)
     jc_raw_reader_close(reader);
     jc_raw_reader_init(reader);
 
-    const jc_platform_info *platform = jc_platform_current();
-    if (platform->raw_format == JC_RAW_FORMAT_TG5040) {
+    if (platform_uses_split_raw()) {
         reader->stream_count = 2;
         if (open_stream(reader, 0, jc_raw_left_device_path(), JC_STICK_LEFT, false) != 0)
             return -1;
@@ -165,9 +176,9 @@ int jc_raw_reader_open_stick(jc_raw_reader *reader, jc_stick stick)
 {
     if (!reader)
         return -1;
+    (void)stick;
 
-    const jc_platform_info *platform = jc_platform_current();
-    if (platform->raw_format != JC_RAW_FORMAT_TG5040)
+    if (!platform_uses_split_raw())
         return jc_raw_reader_open(reader);
 
     return jc_raw_reader_open(reader);
@@ -189,7 +200,15 @@ void jc_raw_reader_close(jc_raw_reader *reader)
 
 static int packet_size_for_platform(void)
 {
-    return jc_platform_current()->raw_format == JC_RAW_FORMAT_TG5040 ? 8 : 6;
+    switch (jc_platform_current()->raw_format) {
+    case JC_RAW_FORMAT_TG5050:
+        return 20;
+    case JC_RAW_FORMAT_TG5040:
+        return 8;
+    case JC_RAW_FORMAT_MY355:
+    default:
+        return 6;
+    }
 }
 
 static int parse_my355_packet(const unsigned char *packet, size_t packet_size,
@@ -230,12 +249,46 @@ static int parse_tg5040_packet(const unsigned char *packet, size_t packet_size,
     return 0;
 }
 
+static int le16(const unsigned char *p)
+{
+    return (int)p[0] | ((int)p[1] << 8);
+}
+
+static int le32(const unsigned char *p)
+{
+    return (int)p[0] | ((int)p[1] << 8) |
+           ((int)p[2] << 16) | ((int)p[3] << 24);
+}
+
+static int parse_tg5050_packet(const unsigned char *packet, size_t packet_size,
+                               jc_stick stick, jc_raw_sample *out)
+{
+    if (packet_size != 20 || packet[0] != 0xff || packet[18] != 0xfe)
+        return -1;
+    int buttons = le32(packet + 2);
+    if (stick == JC_STICK_RIGHT) {
+        out->right_x = le16(packet + 10);
+        out->right_y = le16(packet + 12);
+        out->right_buttons = buttons;
+        out->right_valid = true;
+    } else {
+        out->left_x = le16(packet + 6);
+        out->left_y = le16(packet + 8);
+        out->left_buttons = buttons;
+        out->left_valid = true;
+    }
+    out->valid = true;
+    return 0;
+}
+
 int jc_raw_parse_packet(const unsigned char *packet, size_t packet_size,
                         jc_stick stick, jc_raw_sample *out)
 {
     if (!packet || !out)
         return -1;
     memset(out, 0, sizeof(*out));
+    if (jc_platform_current()->raw_format == JC_RAW_FORMAT_TG5050)
+        return parse_tg5050_packet(packet, packet_size, stick, out);
     if (jc_platform_current()->raw_format == JC_RAW_FORMAT_TG5040)
         return parse_tg5040_packet(packet, packet_size, stick, out);
     return parse_my355_packet(packet, packet_size, out);
@@ -307,8 +360,7 @@ int jc_raw_parse_byte(jc_raw_reader *reader, unsigned char byte, jc_raw_sample *
         reader->stream_count = 1;
         reader->streams[0].fd = -1;
         reader->streams[0].stick = JC_STICK_LEFT;
-        reader->streams[0].combined =
-            jc_platform_current()->raw_format == JC_RAW_FORMAT_MY355;
+        reader->streams[0].combined = !platform_uses_split_raw();
         reader->streams[0].path = jc_raw_device_path();
     }
     return parse_stream_byte(reader, &reader->streams[0], byte, out);
@@ -422,7 +474,7 @@ static int read_comm(pid_t pid, char *buf, size_t buf_size)
 static void pause_trimui_inputd(void)
 {
     paused_pid_count = 0;
-    if (jc_platform_current()->id != JC_PLATFORM_TG5040)
+    if (!platform_uses_trimui_inputd())
         return;
 
     DIR *dir = opendir("/proc");

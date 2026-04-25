@@ -42,8 +42,22 @@ static int file_exists(const char *path)
     return access(path, F_OK) == 0;
 }
 
+static void clear_path_envs(void)
+{
+    unsetenv("CALIBRAGE_SD_USERDATA_ROOT");
+    unsetenv("CALIBRAGE_RUNTIME_USERDATA_ROOT");
+    unsetenv("CALIBRAGE_INPUTD_DIR");
+    unsetenv("CALIBRAGE_RELOAD_TRIGGER_PATH");
+    unsetenv("CALIBRAGE_RAW_DEVICE");
+    unsetenv("CALIBRAGE_RAW_LEFT_DEVICE");
+    unsetenv("CALIBRAGE_RAW_RIGHT_DEVICE");
+    unsetenv("CALIBRAGE_CALIBRATING_FLAG");
+    unsetenv("USERDATA_PATH");
+}
+
 static void test_parse_and_format(void)
 {
+    clear_path_envs();
     setenv("CALIBRAGE_PLATFORM", "my355", 1);
     const char *text =
         "x_min=20\nx_max=216\ny_min=35\ny_max=216\nx_zero=116\ny_zero=130\n";
@@ -62,6 +76,7 @@ static void test_parse_and_format(void)
 
 static void test_tg5040_defaults_and_parse(void)
 {
+    clear_path_envs();
     setenv("CALIBRAGE_PLATFORM", "tg5040", 1);
     jc_config cfg;
     jc_config_default(&cfg);
@@ -84,8 +99,36 @@ static void test_tg5040_defaults_and_parse(void)
                                &cfg, err, sizeof(err)) != 0);
 }
 
+static void test_tg5050_defaults_and_parse(void)
+{
+    clear_path_envs();
+    setenv("CALIBRAGE_PLATFORM", "tg5050", 1);
+    jc_config cfg;
+    jc_config_default(&cfg);
+    CHECK(cfg.x_min == 560);
+    CHECK(cfg.x_max == 3600);
+    CHECK(cfg.y_min == 400);
+    CHECK(cfg.y_max == 3600);
+    CHECK(cfg.x_zero == 2048);
+    CHECK(cfg.y_zero == 2048);
+    CHECK(strstr(jc_config_sd_userdata_root(), ".userdata/tg5050/joes-calibrage") != NULL);
+    CHECK(strstr(jc_config_sd_userdata_root(), ".userdata/tg5040") == NULL);
+
+    const char *text =
+        "x_min=500\nx_max=3700\ny_min=390\ny_max=3650\n"
+        "x_zero=2040\ny_zero=2055\n";
+    char err[128] = {0};
+    CHECK(jc_config_parse_text(text, &cfg, err, sizeof(err)) == 0);
+    CHECK(cfg.x_max == 3700);
+    CHECK(cfg.y_zero == 2055);
+
+    CHECK(jc_config_parse_text("x_min=0\nx_max=5000\ny_min=0\ny_max=1\nx_zero=0\ny_zero=0\n",
+                               &cfg, err, sizeof(err)) != 0);
+}
+
 static void test_raw_packet_parser(void)
 {
+    clear_path_envs();
     setenv("CALIBRAGE_PLATFORM", "my355", 1);
     unsigned char packet[6] = {0xff, 0x82, 0x74, 0x7d, 0x7b, 0xfe};
     jc_raw_sample sample = {0};
@@ -128,10 +171,56 @@ static void test_raw_packet_parser(void)
 
     tg_packet[7] = 0xfd;
     CHECK(jc_raw_parse_packet(tg_packet, sizeof(tg_packet), JC_STICK_RIGHT, &sample) != 0);
+
+    setenv("CALIBRAGE_PLATFORM", "tg5050", 1);
+    unsigned char tg5050_packet[20] = {
+        0xff, 0x00,
+        0x01, 0x03, 0x00, 0x00,
+        0x30, 0x02, 0x00, 0x08,
+        0x10, 0x0e, 0x90, 0x01,
+        0x00, 0x00, 0x00, 0x00,
+        0xfe, 0x00,
+    };
+    memset(&sample, 0, sizeof(sample));
+    CHECK(jc_raw_parse_packet(tg5050_packet, sizeof(tg5050_packet),
+                              JC_STICK_LEFT, &sample) == 0);
+    CHECK(sample.left_x == 560);
+    CHECK(sample.left_y == 2048);
+    CHECK(sample.left_buttons == 0x00000301);
+    CHECK(sample.left_valid);
+    CHECK(!sample.right_valid);
+
+    memset(&sample, 0, sizeof(sample));
+    CHECK(jc_raw_parse_packet(tg5050_packet, sizeof(tg5050_packet),
+                              JC_STICK_RIGHT, &sample) == 0);
+    CHECK(sample.right_x == 3600);
+    CHECK(sample.right_y == 400);
+    CHECK(sample.right_buttons == 0x00000301);
+    CHECK(sample.right_valid);
+    CHECK(!sample.left_valid);
+
+    jc_raw_reader_init(&reader);
+    memset(&stream_sample, 0, sizeof(stream_sample));
+    unsigned char noisy[42];
+    memset(noisy, 0, sizeof(noisy));
+    noisy[0] = 0x44;
+    noisy[1] = 0xff;
+    noisy[2] = 0x01;
+    memcpy(noisy + 22, tg5050_packet, sizeof(tg5050_packet));
+    for (size_t i = 0; i < sizeof(noisy); i++)
+        (void)jc_raw_parse_byte(&reader, noisy[i], &stream_sample);
+    CHECK(stream_sample.valid);
+    CHECK(stream_sample.left_x == 560);
+    CHECK(stream_sample.left_y == 2048);
+
+    tg5050_packet[18] = 0xfd;
+    CHECK(jc_raw_parse_packet(tg5050_packet, sizeof(tg5050_packet),
+                              JC_STICK_LEFT, &sample) != 0);
 }
 
 static void test_capture_math(void)
 {
+    clear_path_envs();
     setenv("CALIBRAGE_PLATFORM", "my355", 1);
     jc_calibration_capture cap;
     jc_capture_reset(&cap);
@@ -179,6 +268,27 @@ static void test_capture_math(void)
     for (int i = 0; i < 12; i++)
         jc_capture_add_center(&cap, 2100, 2120);
     CHECK(jc_capture_make_config(&cap, &cfg, err, sizeof(err)) != 0);
+
+    setenv("CALIBRAGE_PLATFORM", "tg5050", 1);
+    jc_capture_reset(&cap);
+    for (int i = 0; i < 30; i++)
+        jc_capture_add_range(&cap, 560 + (i % 2) * 3040,
+                             400 + (i % 3) * 1600);
+    for (int i = 0; i < 12; i++)
+        jc_capture_add_center(&cap, 2046 + (i % 5), 2048 + (i % 4));
+    CHECK(jc_capture_make_config(&cap, &cfg, err, sizeof(err)) == 0);
+    CHECK(cfg.x_min == 560);
+    CHECK(cfg.x_max == 3600);
+    CHECK(cfg.y_min == 400);
+    CHECK(cfg.y_max == 3600);
+    CHECK(cfg.x_zero >= 2046 && cfg.x_zero <= 2050);
+
+    jc_capture_reset(&cap);
+    for (int i = 0; i < 30; i++)
+        jc_capture_add_range(&cap, 2000, 2100);
+    for (int i = 0; i < 12; i++)
+        jc_capture_add_center(&cap, 2048, 2048);
+    CHECK(jc_capture_make_config(&cap, &cfg, err, sizeof(err)) != 0);
 }
 
 static void make_dir(const char *path)
@@ -191,6 +301,7 @@ static void make_dir(const char *path)
 
 static void test_save_restore_and_reload(void)
 {
+    clear_path_envs();
     setenv("CALIBRAGE_PLATFORM", "my355", 1);
     unsetenv("CALIBRAGE_RELOAD_TRIGGER_PATH");
     char root_template[] = "/tmp/calibrage-test-XXXXXX";
@@ -258,6 +369,7 @@ static void test_save_restore_and_reload(void)
 
 static void test_tg5040_save_restore_and_restart_signal(void)
 {
+    clear_path_envs();
     setenv("CALIBRAGE_PLATFORM", "tg5040", 1);
     unsetenv("USERDATA_PATH");
 
@@ -324,14 +436,89 @@ static void test_tg5040_save_restore_and_restart_signal(void)
     CHECK(strstr(mirror_text, "x_min=1050") != NULL);
 }
 
+static void test_tg5050_save_restore_and_cal_update(void)
+{
+    clear_path_envs();
+    setenv("CALIBRAGE_PLATFORM", "tg5050", 1);
+
+    char root_template[] = "/tmp/calibrage-tg5050-test-XXXXXX";
+    char *root = mkdtemp(root_template);
+    CHECK(root != NULL);
+    if (!root)
+        return;
+
+    char mirror[256];
+    char runtime[256];
+    char trigger[256];
+    char restart[256];
+    char root_sd[256];
+    snprintf(mirror, sizeof(mirror), "%s/sd/.userdata/tg5050/joes-calibrage", root);
+    snprintf(runtime, sizeof(runtime), "%s/UDISK", root);
+    snprintf(trigger, sizeof(trigger), "%s/trimui_inputd/cal_update", root);
+    snprintf(restart, sizeof(restart), "%s/trimui_inputd_restart", root);
+    snprintf(root_sd, sizeof(root_sd), "%s/sd", root);
+    make_dir(root_sd);
+    make_dir(runtime);
+
+    setenv("CALIBRAGE_SD_USERDATA_ROOT", mirror, 1);
+    setenv("CALIBRAGE_RUNTIME_USERDATA_ROOT", runtime, 1);
+    setenv("CALIBRAGE_RELOAD_TRIGGER_PATH", trigger, 1);
+
+    char runtime_left[320];
+    char runtime_right[320];
+    snprintf(runtime_left, sizeof(runtime_left), "%s/joypad.config", runtime);
+    snprintf(runtime_right, sizeof(runtime_right), "%s/joypad_right.config", runtime);
+    write_text(runtime_left,
+               "x_min=560\nx_max=3600\ny_min=400\ny_max=3600\n"
+               "x_zero=2048\ny_zero=2048\n");
+    write_text(runtime_right,
+               "x_min=600\nx_max=3500\ny_min=450\ny_max=3550\n"
+               "x_zero=2000\ny_zero=2100\n");
+
+    jc_config cfg = {
+        .x_min = 520, .x_max = 3700, .y_min = 420,
+        .y_max = 3650, .x_zero = 2040, .y_zero = 2050,
+    };
+    char err[160] = {0};
+    CHECK(jc_config_save_stick(JC_STICK_LEFT, &cfg, err, sizeof(err)) == 0);
+
+    char mirror_left[360];
+    snprintf(mirror_left, sizeof(mirror_left), "%s/joypad.config", mirror);
+    CHECK(file_exists(runtime_left));
+    CHECK(file_exists(mirror_left));
+    CHECK(file_exists(trigger));
+    CHECK(!file_exists(restart));
+    CHECK(strstr(mirror_left, ".userdata/tg5050/joes-calibrage") != NULL);
+    CHECK(strstr(mirror_left, ".userdata/tg5040") == NULL);
+
+    char runtime_backup[340];
+    snprintf(runtime_backup, sizeof(runtime_backup), "%s.bak", runtime_left);
+    CHECK(file_exists(runtime_backup));
+
+    jc_config_pair pair;
+    CHECK(jc_config_load_pair(&pair, err, sizeof(err)) == 0);
+    CHECK(pair.left.x_min == 520);
+    CHECK(pair.right.x_zero == 2000);
+
+    CHECK(jc_config_restore_backup(err, sizeof(err)) == 0);
+    CHECK(jc_config_load_pair(&pair, err, sizeof(err)) == 0);
+    CHECK(pair.left.x_min == 560);
+
+    char mirror_text[256] = {0};
+    read_text(mirror_left, mirror_text, sizeof(mirror_text));
+    CHECK(strstr(mirror_text, "x_min=560") != NULL);
+}
+
 int main(void)
 {
     test_parse_and_format();
     test_tg5040_defaults_and_parse();
+    test_tg5050_defaults_and_parse();
     test_raw_packet_parser();
     test_capture_math();
     test_save_restore_and_reload();
     test_tg5040_save_restore_and_restart_signal();
+    test_tg5050_save_restore_and_cal_update();
 
     if (failures) {
         fprintf(stderr, "%d test failure(s)\n", failures);

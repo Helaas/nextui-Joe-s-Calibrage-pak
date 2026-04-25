@@ -7,7 +7,7 @@
 
 #define JC_CONFIG_FIELD_COUNT 6
 #define JC_PATH_MAX 512
-#define JC_RAW_MAX_PACKET 8
+#define JC_RAW_MAX_PACKET 20
 
 typedef enum {
     JC_STICK_LEFT = 0,
@@ -17,11 +17,13 @@ typedef enum {
 typedef enum {
     JC_PLATFORM_MY355 = 0,
     JC_PLATFORM_TG5040 = 1,
+    JC_PLATFORM_TG5050 = 2,
 } jc_platform_id;
 
 typedef enum {
     JC_RAW_FORMAT_MY355 = 0,
     JC_RAW_FORMAT_TG5040 = 1,
+    JC_RAW_FORMAT_TG5050 = 2,
 } jc_raw_format;
 
 typedef struct {
