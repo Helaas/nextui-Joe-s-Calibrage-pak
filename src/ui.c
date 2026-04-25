@@ -165,6 +165,16 @@ static void draw_line(int x1, int y1, int x2, int y2, ap_color c)
     SDL_RenderDrawLine(r, x1, y1, x2, y2);
 }
 
+static void clamp_stick_vector(float *x, float *y)
+{
+    float len_sq = *x * *x + *y * *y;
+    if (len_sq <= 1.0f)
+        return;
+    float scale = 1.0f / sqrtf(len_sq);
+    *x *= scale;
+    *y *= scale;
+}
+
 static void draw_stick_widget(int cx, int cy, int radius, float x, float y,
                               const char *label, const char *detail,
                               int text_x, int text_w)
@@ -173,6 +183,7 @@ static void draw_stick_widget(int cx, int cy, int radius, float x, float y,
     ap_color ring = t->hint;
     ap_color dot = t->highlight;
     ap_color cross = t->accent;
+    clamp_stick_vector(&x, &y);
     ap_draw_circle(cx, cy, radius, (ap_color){ ring.r, ring.g, ring.b, 55 });
     draw_line(cx - radius, cy, cx + radius, cy, cross);
     draw_line(cx, cy - radius, cx, cy + radius, cross);
@@ -432,8 +443,14 @@ static void draw_calibration_screen(jc_stick stick, int step,
              cap->range_count, cap->zero_count);
     ap_draw_text_ellipsized(stats_font, stats, content.x,
                             stats_y + font_line_h(stats_font), t->hint, content.w);
-    if (status_message && status_message[0]) {
-        ap_draw_text_ellipsized(stats_font, status_message, content.x,
+    char auto_status[96] = {0};
+    const char *display_status = status_message && status_message[0] ? status_message : NULL;
+    if (step == 0 && range_ready(cap)) {
+        snprintf(auto_status, sizeof(auto_status), "Range captured. Press A.");
+        display_status = auto_status;
+    }
+    if (display_status && display_status[0]) {
+        ap_draw_text_ellipsized(stats_font, display_status, content.x,
                                 stats_y - font_line_h(stats_font) - ui_gap(2),
                                 t->text, content.w);
     }

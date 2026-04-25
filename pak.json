@@ -7,7 +7,7 @@
   "repo_url": "https://github.com/Helaas/nextui-Joe-s-Calibrage-pak",
   "release_filename": "Joe's Calibrage.pakz",
   "changelog": {
-    "v0.1.0": "Initial my355 calibration tool with persistent joypad config writes."
+    "v0.1.0": "Initial thumbstick calibration tool for my355, tg5040, and tg5050 with persistent joypad config writes."
   },
   "platforms": [
     "my355",

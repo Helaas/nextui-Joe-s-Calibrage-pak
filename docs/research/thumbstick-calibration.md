@@ -167,6 +167,7 @@ Raw stick sources:
   A live no-rotate capture on 2026-04-26 mapped `A=0x00000100`, `B=0x00000001`, `X=0x00000200`, `Y=0x00000002`.
   With rotate flag present, it maps `A=0x00000001`, `B=0x00000002`, `X=0x00010000`, `Y=0x00020000`.
 - Raw Y increases opposite to the app-facing SDL axis, so the calibration preview dot flips Y for display only; saved calibration values stay in the raw daemon coordinate system.
+- The persisted format is per-axis min/max/zero only. Diagonal raw positions can normalize to a vector longer than one because both axes are near their limits at once, so the UI clamps the preview dot to the circular guide for display only.
 
 Runtime update contract:
 
