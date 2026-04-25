@@ -1,0 +1,14 @@
+# Build output
+build/
+
+# NextUI preview/theme cache
+.cache/
+
+# Local mock/device data
+mock_sdcard/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
