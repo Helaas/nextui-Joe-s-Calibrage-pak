@@ -43,6 +43,15 @@ static int font_line_h(TTF_Font *font)
     return font ? TTF_FontLineSkip(font) : ui_gap(20);
 }
 
+static int apply_runtime_reload(char *err, size_t err_size)
+{
+    if (jc_config_apply_reload(err, err_size) != 0)
+        return -1;
+    if (jc_platform_current()->id == JC_PLATFORM_TG5040)
+        ap_refresh_input();
+    return 0;
+}
+
 typedef enum {
     UI_ACTION_TEST = 0,
     UI_ACTION_CAL_LEFT,
@@ -422,7 +431,8 @@ static void handle_calibration_button(int button, int *step,
                                       size_t status_size,
                                       char *final_message,
                                       size_t final_size,
-                                      bool *final_error)
+                                      bool *final_error,
+                                      bool *saved)
 {
     char err[160] = {0};
     if (status_message && status_size > 0)
@@ -453,6 +463,7 @@ static void handle_calibration_button(int button, int *step,
         } else {
             snprintf(final_message, final_size, "Calibration saved.");
             *final_error = false;
+            *saved = true;
             *done = true;
         }
     }
@@ -466,30 +477,31 @@ static void handle_raw_calibration_buttons(unsigned raw_pressed, int *step,
                                            size_t status_size,
                                            char *final_message,
                                            size_t final_size,
-                                           bool *final_error)
+                                           bool *final_error,
+                                           bool *saved)
 {
     if (raw_pressed & 0x20)
         handle_calibration_button(AP_BTN_B, step, cap, stick, done, cancelled,
                                   status_message, status_size,
-                                  final_message, final_size, final_error);
+                                  final_message, final_size, final_error, saved);
     if (*done)
         return;
     if (raw_pressed & 0x04)
         handle_calibration_button(AP_BTN_X, step, cap, stick, done, cancelled,
                                   status_message, status_size,
-                                  final_message, final_size, final_error);
+                                  final_message, final_size, final_error, saved);
     if (*done)
         return;
     if (raw_pressed & 0x10)
         handle_calibration_button(AP_BTN_A, step, cap, stick, done, cancelled,
                                   status_message, status_size,
-                                  final_message, final_size, final_error);
+                                  final_message, final_size, final_error, saved);
     if (*done)
         return;
     if (raw_pressed & 0x08)
         handle_calibration_button(AP_BTN_Y, step, cap, stick, done, cancelled,
                                   status_message, status_size,
-                                  final_message, final_size, final_error);
+                                  final_message, final_size, final_error, saved);
 }
 
 static void calibrate_stick(jc_stick stick)
@@ -518,6 +530,7 @@ static void calibrate_stick(jc_stick stick)
     char status_message[128] = {0};
     char final_message[160] = {0};
     bool final_error = false;
+    bool saved = false;
 
     while (!done) {
         int poll = jc_raw_reader_poll(&raw, &sample);
@@ -544,7 +557,7 @@ static void calibrate_stick(jc_stick stick)
                                            &done, &cancelled,
                                            status_message, sizeof(status_message),
                                            final_message, sizeof(final_message),
-                                           &final_error);
+                                           &final_error, &saved);
         }
 
         ap_input_event ev;
@@ -555,7 +568,7 @@ static void calibrate_stick(jc_stick stick)
                                       &done, &cancelled,
                                       status_message, sizeof(status_message),
                                       final_message, sizeof(final_message),
-                                      &final_error);
+                                      &final_error, &saved);
         }
 
         draw_calibration_screen(stick, step, &cap, &sample, status_message);
@@ -579,6 +592,13 @@ static void calibrate_stick(jc_stick stick)
 
     jc_raw_end_calibration();
     jc_raw_reader_close(&raw);
+    if (saved) {
+        if (apply_runtime_reload(err, sizeof(err)) != 0) {
+            snprintf(final_message, sizeof(final_message),
+                     "Calibration saved, but input restart failed.");
+            final_error = true;
+        }
+    }
     if (final_message[0])
         show_message(final_message, final_error);
     else if (cancelled)
@@ -592,6 +612,8 @@ static void restore_backup_flow(void)
     char err[160] = {0};
     if (jc_config_restore_backup(err, sizeof(err)) != 0)
         show_message(err[0] ? err : "Could not restore backups.", true);
+    else if (apply_runtime_reload(err, sizeof(err)) != 0)
+        show_message(err[0] ? err : "Backups restored, but input restart failed.", true);
     else
         show_message("Backups restored.", false);
 }

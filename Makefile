@@ -4,6 +4,7 @@ APP_NAME := joes-calibrage
 PAK_NAME := Joe's Calibrage
 APOSTROPHE_DIR := third_party/apostrophe
 APOSTROPHE_BRANCH := main
+PATCH_DIR := patches
 BUILD_DIR := build
 DIST_DIR := $(BUILD_DIR)/release
 STAGING_DIR := $(BUILD_DIR)/staging
@@ -17,6 +18,8 @@ TG5040_TOOLCHAIN := ghcr.io/loveretro/tg5040-toolchain:latest
 ADB ?= adb
 
 COMMON_INCLUDES := -I$(APOSTROPHE_DIR)/include -Isrc
+APOSTROPHE_PATCHES := $(wildcard $(PATCH_DIR)/*.patch)
+APOSTROPHE_PATCH_STAMP := $(BUILD_DIR)/apostrophe-patches.stamp
 
 .PHONY: all native mac run-mac run-native test-native my355 tg5040 \
 	package-my355 package-tg5040 package do-package deploy deploy-platform \
@@ -29,21 +32,42 @@ all: my355 tg5040
 $(APOSTROPHE_DIR)/include/apostrophe.h:
 	git submodule update --init
 
+$(APOSTROPHE_PATCH_STAMP): $(APOSTROPHE_DIR)/include/apostrophe.h $(APOSTROPHE_PATCHES)
+	@set -euo pipefail; \
+	mkdir -p "$(dir $@)"; \
+	cd "$(APOSTROPHE_DIR)"; \
+	for patch in $(abspath $(APOSTROPHE_PATCHES)); do \
+		if git apply --reverse --check "$$patch" >/dev/null 2>&1; then \
+			echo "Apostrophe patch already applied: $$(basename "$$patch")"; \
+		else \
+			echo "Applying Apostrophe patch: $$(basename "$$patch")"; \
+			git apply "$$patch"; \
+		fi; \
+	done; \
+	touch "$(CURDIR)/$@"
+
 update-apostrophe: $(APOSTROPHE_DIR)/include/apostrophe.h
 	@set -euo pipefail; \
+	for patch in $(abspath $(APOSTROPHE_PATCHES)); do \
+		if git -C "$(APOSTROPHE_DIR)" apply --reverse --check "$$patch" >/dev/null 2>&1; then \
+			echo "Reversing Apostrophe patch: $$(basename "$$patch")"; \
+			git -C "$(APOSTROPHE_DIR)" apply --reverse "$$patch"; \
+		fi; \
+	done; \
 	git -C "$(APOSTROPHE_DIR)" fetch origin "$(APOSTROPHE_BRANCH)"; \
 	commit=$$(git -C "$(APOSTROPHE_DIR)" rev-parse "origin/$(APOSTROPHE_BRANCH)"); \
 	git -C "$(APOSTROPHE_DIR)" checkout "$$commit" >/dev/null; \
+	rm -f "$(APOSTROPHE_PATCH_STAMP)"; \
 	echo "Apostrophe pinned to $$commit"
 
-setup-nextui-preview-cache: $(APOSTROPHE_DIR)/include/apostrophe.h
+setup-nextui-preview-cache: $(APOSTROPHE_PATCH_STAMP)
 	@$(MAKE) -C $(APOSTROPHE_DIR) setup-nextui-preview-cache \
 		CACHE_DIR=$(CURDIR)/$(CACHE_DIR)
 
 clean-nextui-preview-cache:
 	rm -rf $(CACHE_DIR)/nextui-preview
 
-mac: $(APOSTROPHE_DIR)/include/apostrophe.h
+mac: $(APOSTROPHE_PATCH_STAMP)
 	@$(MAKE) setup-nextui-preview-cache
 	@mkdir -p $(BUILD_DIR)/mac
 	cc -std=gnu11 -O0 -g \
@@ -69,14 +93,14 @@ $(TEST_BIN): $(TEST_SRC_FILES)
 test-native: $(TEST_BIN)
 	./$(TEST_BIN)
 
-my355: $(APOSTROPHE_DIR)/include/apostrophe.h
+my355: $(APOSTROPHE_PATCH_STAMP)
 	@mkdir -p $(BUILD_DIR)/my355
 	docker run --rm \
 		-v "$(CURDIR)":/workspace \
 		$(MY355_TOOLCHAIN) \
 		make -C /workspace -f ports/my355/Makefile BUILD_DIR=/workspace/$(BUILD_DIR)/my355
 
-tg5040: $(APOSTROPHE_DIR)/include/apostrophe.h
+tg5040: $(APOSTROPHE_PATCH_STAMP)
 	@mkdir -p $(BUILD_DIR)/tg5040
 	docker run --rm \
 		-v "$(CURDIR)":/workspace \

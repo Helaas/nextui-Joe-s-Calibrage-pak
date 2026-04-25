@@ -606,6 +606,28 @@ int jc_config_trigger_reload(char *err, size_t err_size)
     return 0;
 }
 
+int jc_config_apply_reload(char *err, size_t err_size)
+{
+    if (jc_platform_current()->id != JC_PLATFORM_TG5040)
+        return 0;
+
+    const char *skip = getenv("CALIBRAGE_SKIP_INPUTD_RESTART");
+    if (skip && skip[0] != '\0')
+        return 0;
+
+    sync();
+    int rc = system("killall -9 trimui_inputd >/dev/null 2>&1; "
+                    "sleep 0.2; "
+                    "trimui_inputd >/dev/null 2>&1 & "
+                    "sleep 0.6");
+    if (rc != 0) {
+        set_err(err, err_size, "Could not restart trimui_inputd.");
+        return -1;
+    }
+    unlink(jc_config_reload_trigger_path());
+    return 0;
+}
+
 int jc_read_joy_type(char *buf, size_t buf_size)
 {
     if (!buf || buf_size == 0)

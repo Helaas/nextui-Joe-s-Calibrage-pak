@@ -119,6 +119,7 @@ int jc_config_load_pair(jc_config_pair *pair, char *err, size_t err_size);
 int jc_config_save_stick(jc_stick stick, const jc_config *cfg, char *err, size_t err_size);
 int jc_config_restore_backup(char *err, size_t err_size);
 int jc_config_trigger_reload(char *err, size_t err_size);
+int jc_config_apply_reload(char *err, size_t err_size);
 const char *jc_config_sd_userdata_root(void);
 const char *jc_config_runtime_userdata_root(void);
 const char *jc_config_inputd_dir(void);

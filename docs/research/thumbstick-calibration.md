@@ -118,13 +118,14 @@ Runtime update contract:
 - Live probing showed `grab` and `/tmp/system_suspend` do not give the tool exclusive serial access. `trimui_inputd` keeps `/dev/ttyS3` and `/dev/ttyS4` open and continues draining packets.
 - Reliable calibration requires pausing `trimui_inputd`, opening both raw tty streams, using the selected stick's X/Y samples, and reading A/B/X/Y directly from the right-stick packet button byte.
 - Raw face-button bits observed while `trimui_inputd` was paused: `A=0x10`, `B=0x20`, `X=0x04`, `Y=0x08`.
+- After saving or restoring calibration, the app restarts `trimui_inputd` immediately, waits briefly for the virtual joystick to return, and calls the locally patched Apostrophe `ap_refresh_input()` hook so Test Sticks reflects the new normalized values without closing Joe's Calibrage.
 
 Persistence strategy:
 
 - Runtime source of truth is `/mnt/UDISK/joypad*.config` because stock `trimui_inputd` hardcodes that path.
 - Mirror successful saves to `/mnt/SDCARD/.userdata/tg5040/joes-calibrage/joypad*.config`.
 - The SD mirror is platform-isolated and is not read by my355.
-- On app exit, `launch.sh` removes `/tmp/trimui_inputd/grab` and restarts `trimui_inputd` if `/tmp/trimui_inputd_restart` exists.
+- On app exit, `launch.sh` still removes `/tmp/trimui_inputd/grab` and restarts `trimui_inputd` if `/tmp/trimui_inputd_restart` exists. This is a fallback for abnormal exits; normal save/restore applies the restart inside the app.
 
 ## Write Safety
 
