@@ -5,10 +5,11 @@
 
 int jc_clamp_raw(int value)
 {
-    if (value < 0)
-        return 0;
-    if (value > 255)
-        return 255;
+    const jc_platform_info *platform = jc_platform_current();
+    if (value < platform->raw_min)
+        return platform->raw_min;
+    if (value > platform->raw_max)
+        return platform->raw_max;
     return value;
 }
 
@@ -16,10 +17,11 @@ void jc_capture_reset(jc_calibration_capture *cap)
 {
     if (!cap)
         return;
-    cap->x_min = 255;
-    cap->x_max = 0;
-    cap->y_min = 255;
-    cap->y_max = 0;
+    const jc_platform_info *platform = jc_platform_current();
+    cap->x_min = platform->raw_max;
+    cap->x_max = platform->raw_min;
+    cap->y_min = platform->raw_max;
+    cap->y_max = platform->raw_min;
     cap->x_zero_sum = 0;
     cap->y_zero_sum = 0;
     cap->zero_count = 0;
@@ -78,7 +80,9 @@ int jc_capture_make_config(const jc_calibration_capture *cap, jc_config *out,
         set_err(err, err_size, "Not enough movement samples.");
         return -1;
     }
-    if ((cap->x_max - cap->x_min) < 40 || (cap->y_max - cap->y_min) < 40) {
+    int min_range = jc_platform_current()->min_range;
+    if ((cap->x_max - cap->x_min) < min_range ||
+        (cap->y_max - cap->y_min) < min_range) {
         set_err(err, err_size, "Move the stick farther in every direction.");
         return -1;
     }

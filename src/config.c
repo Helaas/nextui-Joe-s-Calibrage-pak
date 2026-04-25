@@ -36,51 +36,91 @@ static const char *env_or_default(const char *env_name, const char *fallback)
 
 const char *jc_config_sd_userdata_root(void)
 {
+    static char dynamic_root[JC_PATH_MAX];
+    const jc_platform_info *platform = jc_platform_current();
     const char *env = getenv("CALIBRAGE_SD_USERDATA_ROOT");
     if (env && env[0] != '\0')
         return env;
+    if (platform->id == JC_PLATFORM_TG5040) {
+        const char *userdata = getenv("USERDATA_PATH");
+        if (userdata && userdata[0] != '\0') {
+            int n = snprintf(dynamic_root, sizeof(dynamic_root),
+                             "%s/joes-calibrage", userdata);
+            if (n > 0 && (size_t)n < sizeof(dynamic_root))
+                return dynamic_root;
+        }
+        return platform->sd_userdata_root;
+    }
     if (access("/mnt/SDCARD", F_OK) == 0)
-        return "/mnt/SDCARD/.userdata/my355/userdata";
+        return platform->sd_userdata_root;
     return "/mnt/sdcard/.userdata/my355/userdata";
 }
 
 const char *jc_config_runtime_userdata_root(void)
 {
-    return env_or_default("CALIBRAGE_RUNTIME_USERDATA_ROOT", "/userdata");
+    return env_or_default("CALIBRAGE_RUNTIME_USERDATA_ROOT",
+                          jc_platform_current()->runtime_userdata_root);
 }
 
 const char *jc_config_inputd_dir(void)
 {
-    return env_or_default("CALIBRAGE_INPUTD_DIR", "/tmp/miyoo_inputd");
+    return env_or_default("CALIBRAGE_INPUTD_DIR",
+                          jc_platform_current()->inputd_dir);
+}
+
+const char *jc_config_reload_trigger_path(void)
+{
+    static char dynamic_path[JC_PATH_MAX];
+    const char *env = getenv("CALIBRAGE_RELOAD_TRIGGER_PATH");
+    if (env && env[0] != '\0')
+        return env;
+
+    const jc_platform_info *platform = jc_platform_current();
+    if (platform->id == JC_PLATFORM_MY355) {
+        int n = snprintf(dynamic_path, sizeof(dynamic_path), "%s/cal_update",
+                         jc_config_inputd_dir());
+        if (n > 0 && (size_t)n < sizeof(dynamic_path))
+            return dynamic_path;
+    }
+    return platform->reload_trigger_path;
 }
 
 static const char *joy_type_path(void)
 {
-    return env_or_default("CALIBRAGE_JOY_TYPE_PATH",
-                          "/sys/class/miyooio_chr_dev/joy_type");
+    const char *env = getenv("CALIBRAGE_JOY_TYPE_PATH");
+    if (env && env[0] != '\0')
+        return env;
+    return jc_platform_current()->joy_type_path;
 }
 
 void jc_config_default(jc_config *cfg)
 {
     if (!cfg)
         return;
-    cfg->x_min = 24;
-    cfg->x_max = 216;
-    cfg->y_min = 35;
-    cfg->y_max = 216;
-    cfg->x_zero = 128;
-    cfg->y_zero = 128;
+    const jc_platform_info *platform = jc_platform_current();
+    cfg->x_min = platform->default_x_min;
+    cfg->x_max = platform->default_x_max;
+    cfg->y_min = platform->default_y_min;
+    cfg->y_max = platform->default_y_max;
+    cfg->x_zero = platform->default_x_zero;
+    cfg->y_zero = platform->default_y_zero;
 }
 
 bool jc_config_valid(const jc_config *cfg)
 {
     if (!cfg)
         return false;
-    if (cfg->x_min < 0 || cfg->x_min > 255 || cfg->x_max < 0 || cfg->x_max > 255)
+    const jc_platform_info *platform = jc_platform_current();
+    int raw_min = platform->raw_min;
+    int raw_max = platform->raw_max;
+    if (cfg->x_min < raw_min || cfg->x_min > raw_max ||
+        cfg->x_max < raw_min || cfg->x_max > raw_max)
         return false;
-    if (cfg->y_min < 0 || cfg->y_min > 255 || cfg->y_max < 0 || cfg->y_max > 255)
+    if (cfg->y_min < raw_min || cfg->y_min > raw_max ||
+        cfg->y_max < raw_min || cfg->y_max > raw_max)
         return false;
-    if (cfg->x_zero < 0 || cfg->x_zero > 255 || cfg->y_zero < 0 || cfg->y_zero > 255)
+    if (cfg->x_zero < raw_min || cfg->x_zero > raw_max ||
+        cfg->y_zero < raw_min || cfg->y_zero > raw_max)
         return false;
     if (cfg->x_min >= cfg->x_max || cfg->y_min >= cfg->y_max)
         return false;
@@ -352,21 +392,27 @@ int jc_config_load_pair(jc_config_pair *pair, char *err, size_t err_size)
         return -1;
     memset(pair, 0, sizeof(*pair));
 
+    const jc_platform_info *platform = jc_platform_current();
+    const char *first_root = jc_config_sd_userdata_root();
+    const char *second_root = jc_config_runtime_userdata_root();
+    if (platform->id == JC_PLATFORM_TG5040) {
+        first_root = jc_config_runtime_userdata_root();
+        second_root = jc_config_sd_userdata_root();
+    }
+
     char local_err[160] = {0};
-    if (load_one(jc_config_sd_userdata_root(), left_name, &pair->left,
-                 local_err, sizeof(local_err)) == 0) {
+    if (load_one(first_root, left_name, &pair->left, local_err, sizeof(local_err)) == 0) {
         pair->have_left = true;
-    } else if (load_one(jc_config_runtime_userdata_root(), left_name, &pair->left,
+    } else if (load_one(second_root, left_name, &pair->left,
                         local_err, sizeof(local_err)) == 0) {
         pair->have_left = true;
     } else {
         jc_config_default(&pair->left);
     }
 
-    if (load_one(jc_config_sd_userdata_root(), right_name, &pair->right,
-                 local_err, sizeof(local_err)) == 0) {
+    if (load_one(first_root, right_name, &pair->right, local_err, sizeof(local_err)) == 0) {
         pair->have_right = true;
-    } else if (load_one(jc_config_runtime_userdata_root(), right_name, &pair->right,
+    } else if (load_one(second_root, right_name, &pair->right,
                         local_err, sizeof(local_err)) == 0) {
         pair->have_right = true;
     } else {
@@ -421,18 +467,26 @@ int jc_config_save_stick(jc_stick stick, const jc_config *cfg, char *err, size_t
         return -1;
     }
 
-    char sd_path[JC_PATH_MAX];
-    char runtime_path[JC_PATH_MAX];
-    if (join_path(sd_path, sizeof(sd_path), jc_config_sd_userdata_root(), name) != 0 ||
-        join_path(runtime_path, sizeof(runtime_path), jc_config_runtime_userdata_root(), name) != 0) {
+    const jc_platform_info *platform = jc_platform_current();
+    const char *primary_root = jc_config_sd_userdata_root();
+    const char *secondary_root = jc_config_runtime_userdata_root();
+    if (platform->id == JC_PLATFORM_TG5040) {
+        primary_root = jc_config_runtime_userdata_root();
+        secondary_root = jc_config_sd_userdata_root();
+    }
+
+    char primary_path[JC_PATH_MAX];
+    char secondary_path[JC_PATH_MAX];
+    if (join_path(primary_path, sizeof(primary_path), primary_root, name) != 0 ||
+        join_path(secondary_path, sizeof(secondary_path), secondary_root, name) != 0) {
         set_err(err, err_size, "Calibration path too long.");
         return -1;
     }
 
-    if (save_to_path_with_backup(sd_path, data, err, err_size) != 0)
+    if (save_to_path_with_backup(primary_path, data, err, err_size) != 0)
         return -1;
-    if (!same_existing_file(sd_path, runtime_path)) {
-        if (save_to_path_with_backup(runtime_path, data, err, err_size) != 0)
+    if (!same_existing_file(primary_path, secondary_path)) {
+        if (save_to_path_with_backup(secondary_path, data, err, err_size) != 0)
             return -1;
     }
 
@@ -466,31 +520,60 @@ static int restore_one(const char *root, const char *name, char *err, size_t err
     return write_file_atomic(path, text, err, err_size);
 }
 
+static int mirror_existing_config(const char *src_root, const char *dst_root,
+                                  const char *name, char *err, size_t err_size)
+{
+    char src[JC_PATH_MAX];
+    char dst[JC_PATH_MAX];
+    char text[512];
+    if (join_path(src, sizeof(src), src_root, name) != 0 ||
+        join_path(dst, sizeof(dst), dst_root, name) != 0) {
+        set_err(err, err_size, "Mirror path too long.");
+        return -1;
+    }
+    if (same_existing_file(src, dst))
+        return 0;
+    if (read_file(src, text, sizeof(text), err, err_size) != 0)
+        return 0;
+    jc_config cfg;
+    if (jc_config_parse_text(text, &cfg, err, err_size) != 0)
+        return -1;
+    return write_file_atomic(dst, text, err, err_size);
+}
+
 int jc_config_restore_backup(char *err, size_t err_size)
 {
+    const jc_platform_info *platform = jc_platform_current();
+    const char *first_root = jc_config_sd_userdata_root();
+    const char *second_root = jc_config_runtime_userdata_root();
+    if (platform->id == JC_PLATFORM_TG5040) {
+        first_root = jc_config_runtime_userdata_root();
+        second_root = jc_config_sd_userdata_root();
+    }
+
     int restored = 0;
-    int rc = restore_one(jc_config_sd_userdata_root(), left_name, err, err_size);
+    int rc = restore_one(first_root, left_name, err, err_size);
     if (rc < 0)
         return -1;
     restored += rc == 0;
-    rc = restore_one(jc_config_sd_userdata_root(), right_name, err, err_size);
+    rc = restore_one(first_root, right_name, err, err_size);
     if (rc < 0)
         return -1;
     restored += rc == 0;
 
-    char sd_left[JC_PATH_MAX];
-    char rt_left[JC_PATH_MAX];
-    if (join_path(sd_left, sizeof(sd_left), jc_config_sd_userdata_root(), left_name) != 0 ||
-        join_path(rt_left, sizeof(rt_left), jc_config_runtime_userdata_root(), left_name) != 0) {
+    char first_left[JC_PATH_MAX];
+    char second_left[JC_PATH_MAX];
+    if (join_path(first_left, sizeof(first_left), first_root, left_name) != 0 ||
+        join_path(second_left, sizeof(second_left), second_root, left_name) != 0) {
         set_err(err, err_size, "Restore path too long.");
         return -1;
     }
-    if (!same_existing_file(sd_left, rt_left)) {
-        rc = restore_one(jc_config_runtime_userdata_root(), left_name, err, err_size);
+    if (!same_existing_file(first_left, second_left)) {
+        rc = restore_one(second_root, left_name, err, err_size);
         if (rc < 0)
             return -1;
         restored += rc == 0;
-        rc = restore_one(jc_config_runtime_userdata_root(), right_name, err, err_size);
+        rc = restore_one(second_root, right_name, err, err_size);
         if (rc < 0)
             return -1;
         restored += rc == 0;
@@ -499,20 +582,19 @@ int jc_config_restore_backup(char *err, size_t err_size)
         set_err(err, err_size, "No calibration backups found.");
         return -1;
     }
+    if (mirror_existing_config(first_root, second_root, left_name, err, err_size) != 0 ||
+        mirror_existing_config(first_root, second_root, right_name, err, err_size) != 0)
+        return -1;
     sync();
     return jc_config_trigger_reload(err, err_size);
 }
 
 int jc_config_trigger_reload(char *err, size_t err_size)
 {
-    const char *dir = jc_config_inputd_dir();
-    if (mkdir_p(dir) != 0) {
-        set_err(err, err_size, "Could not create %s", dir);
-        return -1;
-    }
-    char path[JC_PATH_MAX];
-    if (join_path(path, sizeof(path), dir, "cal_update") != 0) {
-        set_err(err, err_size, "Reload trigger path too long.");
+    const char *path = jc_config_reload_trigger_path();
+    char dir[JC_PATH_MAX];
+    if (parent_dir(path, dir, sizeof(dir)) != 0 || mkdir_p(dir) != 0) {
+        set_err(err, err_size, "Could not create parent directory for %s", path);
         return -1;
     }
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
@@ -528,8 +610,11 @@ int jc_read_joy_type(char *buf, size_t buf_size)
 {
     if (!buf || buf_size == 0)
         return -1;
+    const char *path = joy_type_path();
+    if (!path)
+        return -1;
     char text[128];
-    if (read_file(joy_type_path(), text, sizeof(text), NULL, 0) != 0)
+    if (read_file(path, text, sizeof(text), NULL, 0) != 0)
         return -1;
     char first[32];
     if (sscanf(text, " %31s", first) != 1)

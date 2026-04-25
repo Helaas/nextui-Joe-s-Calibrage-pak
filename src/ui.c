@@ -220,12 +220,17 @@ static void show_test_screen(void)
         snprintf(left_detail, sizeof(left_detail), have_axes ? "SDL axis" : "No input");
         snprintf(right_detail, sizeof(right_detail), have_axes ? "SDL axis" : "No input");
 
-        char joy_type[32] = "unknown";
-        if (jc_read_joy_type(joy_type, sizeof(joy_type)) != 0)
-            snprintf(joy_type, sizeof(joy_type), "n/a");
-        char status[128];
-        snprintf(status, sizeof(status), "SDL axes: %s   joy_type: %s",
-                 have_axes ? "live" : "unavailable", joy_type);
+        char joy_type[32] = {0};
+        char status[160];
+        if (jc_read_joy_type(joy_type, sizeof(joy_type)) == 0) {
+            snprintf(status, sizeof(status), "SDL: %s   platform: %s   joy: %s",
+                     have_axes ? "live" : "unavailable",
+                     jc_platform_id_name(), joy_type);
+        } else {
+            snprintf(status, sizeof(status), "SDL: %s   platform: %s",
+                     have_axes ? "live" : "unavailable",
+                     jc_platform_id_name());
+        }
         ap_draw_text_ellipsized(status_font, status, content.x, status_y,
                                 ap_get_theme()->hint, content.w);
 
@@ -287,6 +292,7 @@ static void show_values_screen(void)
         SDL_Rect content = ui_content_rect(true);
         ap_theme *t = ap_get_theme();
         TTF_Font *body_font = ap_get_font(AP_FONT_TINY);
+        TTF_Font *diag_font = ap_get_font(AP_FONT_MICRO);
         TTF_Font *section_font = ap_get_font(AP_FONT_SMALL);
         int y = content.y + ui_gap(4);
         int block_h = font_line_h(section_font) + font_line_h(body_font) * 2;
@@ -296,14 +302,24 @@ static void show_values_screen(void)
         draw_config_block("Right", &cfg.right, cfg.have_right, content.x, y, content.w);
         y += block_h + ui_gap(14);
 
-        char joy_type[32] = "n/a";
-        (void)jc_read_joy_type(joy_type, sizeof(joy_type));
-        char line[JC_PATH_MAX + 32];
-        snprintf(line, sizeof(line), "SD: %s", jc_config_sd_userdata_root());
-        ap_draw_text_ellipsized(body_font, line, content.x, y, t->hint, content.w);
-        y += font_line_h(body_font);
-        snprintf(line, sizeof(line), "joy_type: %s", joy_type);
-        ap_draw_text_ellipsized(body_font, line, content.x, y, t->hint, content.w);
+        char line[JC_PATH_MAX * 2 + 64];
+        snprintf(line, sizeof(line), "Platform: %s (%s)",
+                 jc_platform_display_name(), jc_platform_id_name());
+        ap_draw_text_ellipsized(diag_font, line, content.x, y, t->hint, content.w);
+        y += font_line_h(diag_font);
+        snprintf(line, sizeof(line), "Runtime: %s", jc_config_runtime_userdata_root());
+        ap_draw_text_ellipsized(diag_font, line, content.x, y, t->hint, content.w);
+        y += font_line_h(diag_font);
+        snprintf(line, sizeof(line), "SD mirror: %s", jc_config_sd_userdata_root());
+        ap_draw_text_ellipsized(diag_font, line, content.x, y, t->hint, content.w);
+        y += font_line_h(diag_font);
+        if (jc_platform_current()->raw_format == JC_RAW_FORMAT_TG5040) {
+            snprintf(line, sizeof(line), "Raw: L %s  R %s",
+                     jc_raw_left_device_path(), jc_raw_right_device_path());
+        } else {
+            snprintf(line, sizeof(line), "Raw: %s", jc_raw_device_path());
+        }
+        ap_draw_text_ellipsized(diag_font, line, content.x, y, t->hint, content.w);
 
         ap_footer_item footer[] = {
             { .button = AP_BTN_A, .label = "OK", .is_confirm = true },
@@ -316,14 +332,16 @@ static void show_values_screen(void)
 
 static bool range_ready(const jc_calibration_capture *cap)
 {
+    int min_range = jc_platform_current()->min_range;
     return cap->range_count >= 20 &&
-           (cap->x_max - cap->x_min) >= 40 &&
-           (cap->y_max - cap->y_min) >= 40;
+           (cap->x_max - cap->x_min) >= min_range &&
+           (cap->y_max - cap->y_min) >= min_range;
 }
 
 static void draw_calibration_screen(jc_stick stick, int step,
                                     const jc_calibration_capture *cap,
-                                    const jc_raw_sample *raw)
+                                    const jc_raw_sample *raw,
+                                    const char *status_message)
 {
     ap_clear_screen();
     ap_draw_screen_title(stick == JC_STICK_LEFT ? "Calibrate Left" : "Calibrate Right", NULL);
@@ -346,11 +364,21 @@ static void draw_calibration_screen(jc_stick stick, int step,
     int y = stick == JC_STICK_LEFT ? raw->left_y : raw->right_y;
     float nx = 0.0f;
     float ny = 0.0f;
-    if (raw->valid) {
-        int cx = cap->zero_count > 0 ? (int)(cap->x_zero_sum / cap->zero_count) : 128;
-        int cy = cap->zero_count > 0 ? (int)(cap->y_zero_sum / cap->zero_count) : 128;
-        nx = jc_config_normalize_axis(x, cap->x_min, cx, cap->x_max);
-        ny = jc_config_normalize_axis(y, cap->y_min, cy, cap->y_max);
+    bool have_selected_raw = stick == JC_STICK_LEFT ? raw->left_valid
+                                                    : raw->right_valid;
+    if (have_selected_raw) {
+        jc_config def;
+        jc_config_default(&def);
+        int zx = cap->zero_count > 0 ? (int)(cap->x_zero_sum / cap->zero_count)
+                                     : def.x_zero;
+        int zy = cap->zero_count > 0 ? (int)(cap->y_zero_sum / cap->zero_count)
+                                     : def.y_zero;
+        int xmin = cap->range_count > 0 ? cap->x_min : def.x_min;
+        int xmax = cap->range_count > 0 ? cap->x_max : def.x_max;
+        int ymin = cap->range_count > 0 ? cap->y_min : def.y_min;
+        int ymax = cap->range_count > 0 ? cap->y_max : def.y_max;
+        nx = jc_config_normalize_axis(x, xmin, zx, xmax);
+        ny = jc_config_normalize_axis(y, ymin, zy, ymax);
     }
 
     int footer_top = ap_get_screen_height() - ap_get_footer_height();
@@ -379,6 +407,89 @@ static void draw_calibration_screen(jc_stick stick, int step,
              cap->range_count, cap->zero_count);
     ap_draw_text_ellipsized(stats_font, stats, content.x,
                             stats_y + font_line_h(stats_font), t->hint, content.w);
+    if (status_message && status_message[0]) {
+        ap_draw_text_ellipsized(stats_font, status_message, content.x,
+                                stats_y - font_line_h(stats_font) - ui_gap(2),
+                                t->text, content.w);
+    }
+}
+
+static void handle_calibration_button(int button, int *step,
+                                      jc_calibration_capture *cap,
+                                      jc_stick stick, bool *done,
+                                      bool *cancelled,
+                                      char *status_message,
+                                      size_t status_size,
+                                      char *final_message,
+                                      size_t final_size,
+                                      bool *final_error)
+{
+    char err[160] = {0};
+    if (status_message && status_size > 0)
+        status_message[0] = '\0';
+    if (button == AP_BTN_B) {
+        *cancelled = true;
+        *done = true;
+    } else if (button == AP_BTN_X) {
+        jc_capture_reset(cap);
+        *step = 0;
+    } else if (*step == 0 && button == AP_BTN_A) {
+        if (range_ready(cap)) {
+            *step = 1;
+        } else {
+            snprintf(status_message, status_size,
+                     "Move the stick farther in every direction.");
+        }
+    } else if (*step == 1 && button == AP_BTN_Y) {
+        jc_config cfg;
+        if (jc_capture_make_config(cap, &cfg, err, sizeof(err)) != 0) {
+            snprintf(final_message, final_size, "%s", err);
+            *final_error = true;
+            *done = true;
+        } else if (jc_config_save_stick(stick, &cfg, err, sizeof(err)) != 0) {
+            snprintf(final_message, final_size, "%s", err);
+            *final_error = true;
+            *done = true;
+        } else {
+            snprintf(final_message, final_size, "Calibration saved.");
+            *final_error = false;
+            *done = true;
+        }
+    }
+}
+
+static void handle_raw_calibration_buttons(unsigned raw_pressed, int *step,
+                                           jc_calibration_capture *cap,
+                                           jc_stick stick, bool *done,
+                                           bool *cancelled,
+                                           char *status_message,
+                                           size_t status_size,
+                                           char *final_message,
+                                           size_t final_size,
+                                           bool *final_error)
+{
+    if (raw_pressed & 0x20)
+        handle_calibration_button(AP_BTN_B, step, cap, stick, done, cancelled,
+                                  status_message, status_size,
+                                  final_message, final_size, final_error);
+    if (*done)
+        return;
+    if (raw_pressed & 0x04)
+        handle_calibration_button(AP_BTN_X, step, cap, stick, done, cancelled,
+                                  status_message, status_size,
+                                  final_message, final_size, final_error);
+    if (*done)
+        return;
+    if (raw_pressed & 0x10)
+        handle_calibration_button(AP_BTN_A, step, cap, stick, done, cancelled,
+                                  status_message, status_size,
+                                  final_message, final_size, final_error);
+    if (*done)
+        return;
+    if (raw_pressed & 0x08)
+        handle_calibration_button(AP_BTN_Y, step, cap, stick, done, cancelled,
+                                  status_message, status_size,
+                                  final_message, final_size, final_error);
 }
 
 static void calibrate_stick(jc_stick stick)
@@ -391,7 +502,7 @@ static void calibrate_stick(jc_stick stick)
         show_message(err, true);
         return;
     }
-    if (jc_raw_reader_open(&raw) != 0) {
+    if (jc_raw_reader_open_stick(&raw, stick) != 0) {
         jc_raw_end_calibration();
         show_message(raw.error[0] ? raw.error : "Raw stick stream unavailable.", true);
         return;
@@ -403,6 +514,10 @@ static void calibrate_stick(jc_stick stick)
     bool done = false;
     bool cancelled = false;
     jc_raw_sample sample = {0};
+    unsigned last_raw_buttons = 0;
+    char status_message[128] = {0};
+    char final_message[160] = {0};
+    bool final_error = false;
 
     while (!done) {
         int poll = jc_raw_reader_poll(&raw, &sample);
@@ -411,7 +526,9 @@ static void calibrate_stick(jc_stick stick)
             cancelled = true;
             break;
         }
-        if (poll > 0 && sample.valid) {
+        bool fresh_for_stick = stick == JC_STICK_LEFT ? sample.left_valid
+                                                      : sample.right_valid;
+        if (poll > 0 && fresh_for_stick) {
             int x = stick == JC_STICK_LEFT ? sample.left_x : sample.right_x;
             int y = stick == JC_STICK_LEFT ? sample.left_y : sample.right_y;
             if (step == 0)
@@ -419,37 +536,29 @@ static void calibrate_stick(jc_stick stick)
             else
                 jc_capture_add_center(&cap, x, y);
         }
+        if (poll > 0 && jc_platform_current()->raw_format == JC_RAW_FORMAT_TG5040) {
+            unsigned raw_buttons = (unsigned)sample.right_buttons;
+            unsigned raw_pressed = raw_buttons & ~last_raw_buttons;
+            last_raw_buttons = raw_buttons;
+            handle_raw_calibration_buttons(raw_pressed, &step, &cap, stick,
+                                           &done, &cancelled,
+                                           status_message, sizeof(status_message),
+                                           final_message, sizeof(final_message),
+                                           &final_error);
+        }
 
         ap_input_event ev;
         while (ap_poll_input(&ev)) {
             if (!ev.pressed)
                 continue;
-            if (ev.button == AP_BTN_B) {
-                cancelled = true;
-                done = true;
-            } else if (ev.button == AP_BTN_X) {
-                jc_capture_reset(&cap);
-                step = 0;
-            } else if (step == 0 && ev.button == AP_BTN_A) {
-                if (range_ready(&cap)) {
-                    step = 1;
-                } else {
-                    show_message("Move the stick farther in every direction before continuing.", true);
-                }
-            } else if (step == 1 && ev.button == AP_BTN_Y) {
-                jc_config cfg;
-                if (jc_capture_make_config(&cap, &cfg, err, sizeof(err)) != 0) {
-                    show_message(err, true);
-                } else if (jc_config_save_stick(stick, &cfg, err, sizeof(err)) != 0) {
-                    show_message(err, true);
-                } else {
-                    show_message("Calibration saved.", false);
-                    done = true;
-                }
-            }
+            handle_calibration_button(ev.button, &step, &cap, stick,
+                                      &done, &cancelled,
+                                      status_message, sizeof(status_message),
+                                      final_message, sizeof(final_message),
+                                      &final_error);
         }
 
-        draw_calibration_screen(stick, step, &cap, &sample);
+        draw_calibration_screen(stick, step, &cap, &sample, status_message);
         ap_footer_item footer_step0[] = {
             { .button = AP_BTN_B, .label = "Cancel" },
             { .button = AP_BTN_X, .label = "Reset" },
@@ -470,7 +579,9 @@ static void calibrate_stick(jc_stick stick)
 
     jc_raw_end_calibration();
     jc_raw_reader_close(&raw);
-    if (cancelled)
+    if (final_message[0])
+        show_message(final_message, final_error);
+    else if (cancelled)
         show_message("Calibration cancelled.", false);
 }
 

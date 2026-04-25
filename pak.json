@@ -2,14 +2,15 @@
   "name": "Joe's Calibrage",
   "version": "v0.1.0",
   "type": "TOOL",
-  "description": "Calibrate and persist Miyoo Flip thumbstick values for NextUI.",
+  "description": "Calibrate and persist thumbstick values for NextUI on Miyoo Flip and TrimUI Smart Pro.",
   "author": "Helaas",
   "repo_url": "https://github.com/Helaas/nextui-Joe-s-Calibrage-pak",
   "release_filename": "Joe's Calibrage.pakz",
   "changelog": {
-    "v0.1.0": "Initial my355-only calibration tool with persistent joypad config writes."
+    "v0.1.0": "Initial my355 calibration tool with persistent joypad config writes."
   },
   "platforms": [
-    "my355"
+    "my355",
+    "tg5040"
   ]
 }

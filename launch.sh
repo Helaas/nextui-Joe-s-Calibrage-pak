@@ -28,4 +28,20 @@ echo "=== Launching $PAK_NAME ($APP_BIN) at $(date) ==="
 echo "platform=${PLATFORM:-unknown} device=${DEVICE:-unknown}"
 echo "args: $*"
 
-exec "./$APP_BIN" "$@"
+"./$APP_BIN" "$@"
+STATUS=$?
+
+if [ "${PLATFORM:-}" = "tg5040" ]; then
+    rm -f /tmp/trimui_inputd/grab
+    if [ -f /tmp/trimui_inputd_restart ]; then
+        echo "Restarting trimui_inputd for updated calibration."
+        killall -9 trimui_inputd >/dev/null 2>&1 || true
+        sleep 0.2
+        if command -v trimui_inputd >/dev/null 2>&1; then
+            trimui_inputd >/dev/null 2>&1 &
+        fi
+        rm -f /tmp/trimui_inputd_restart
+    fi
+fi
+
+exit "$STATUS"

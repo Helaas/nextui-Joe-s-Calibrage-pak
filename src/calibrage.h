@@ -7,11 +7,48 @@
 
 #define JC_CONFIG_FIELD_COUNT 6
 #define JC_PATH_MAX 512
+#define JC_RAW_MAX_PACKET 8
 
 typedef enum {
     JC_STICK_LEFT = 0,
     JC_STICK_RIGHT = 1,
 } jc_stick;
+
+typedef enum {
+    JC_PLATFORM_MY355 = 0,
+    JC_PLATFORM_TG5040 = 1,
+} jc_platform_id;
+
+typedef enum {
+    JC_RAW_FORMAT_MY355 = 0,
+    JC_RAW_FORMAT_TG5040 = 1,
+} jc_raw_format;
+
+typedef struct {
+    jc_platform_id id;
+    const char *id_name;
+    const char *display_name;
+    int raw_min;
+    int raw_max;
+    int min_range;
+    int default_x_min;
+    int default_x_max;
+    int default_y_min;
+    int default_y_max;
+    int default_x_zero;
+    int default_y_zero;
+    const char *sd_userdata_root;
+    const char *runtime_userdata_root;
+    const char *inputd_dir;
+    const char *reload_trigger_path;
+    const char *joy_type_path;
+    const char *raw_combined_device;
+    const char *raw_left_device;
+    const char *raw_right_device;
+    const char *calibration_flag_path;
+    int raw_baud;
+    jc_raw_format raw_format;
+} jc_platform_info;
 
 typedef struct {
     int x_min;
@@ -34,7 +71,11 @@ typedef struct {
     int left_y;
     int right_x;
     int right_y;
+    int left_buttons;
+    int right_buttons;
     bool valid;
+    bool left_valid;
+    bool right_valid;
 } jc_raw_sample;
 
 typedef struct {
@@ -50,11 +91,25 @@ typedef struct {
 
 typedef struct {
     int fd;
-    unsigned char packet[6];
+    unsigned char packet[JC_RAW_MAX_PACKET];
     int packet_pos;
+    jc_stick stick;
+    bool combined;
+    const char *path;
+} jc_raw_stream;
+
+typedef struct {
+    jc_raw_stream streams[2];
+    int stream_count;
     jc_raw_sample last;
+    bool have_left;
+    bool have_right;
     char error[160];
 } jc_raw_reader;
+
+const jc_platform_info *jc_platform_current(void);
+const char *jc_platform_id_name(void);
+const char *jc_platform_display_name(void);
 
 void jc_config_default(jc_config *cfg);
 int jc_config_parse_text(const char *text, jc_config *out, char *err, size_t err_size);
@@ -67,6 +122,7 @@ int jc_config_trigger_reload(char *err, size_t err_size);
 const char *jc_config_sd_userdata_root(void);
 const char *jc_config_runtime_userdata_root(void);
 const char *jc_config_inputd_dir(void);
+const char *jc_config_reload_trigger_path(void);
 int jc_read_joy_type(char *buf, size_t buf_size);
 
 void jc_capture_reset(jc_calibration_capture *cap);
@@ -79,12 +135,16 @@ float jc_config_normalize_axis(int raw, int min, int zero, int max);
 
 void jc_raw_reader_init(jc_raw_reader *reader);
 int jc_raw_reader_open(jc_raw_reader *reader);
+int jc_raw_reader_open_stick(jc_raw_reader *reader, jc_stick stick);
 void jc_raw_reader_close(jc_raw_reader *reader);
 int jc_raw_reader_poll(jc_raw_reader *reader, jc_raw_sample *out);
 int jc_raw_parse_byte(jc_raw_reader *reader, unsigned char byte, jc_raw_sample *out);
-int jc_raw_parse_packet(const unsigned char packet[6], jc_raw_sample *out);
+int jc_raw_parse_packet(const unsigned char *packet, size_t packet_size,
+                        jc_stick stick, jc_raw_sample *out);
 int jc_raw_begin_calibration(char *err, size_t err_size);
 void jc_raw_end_calibration(void);
 const char *jc_raw_device_path(void);
+const char *jc_raw_left_device_path(void);
+const char *jc_raw_right_device_path(void);
 
 #endif
